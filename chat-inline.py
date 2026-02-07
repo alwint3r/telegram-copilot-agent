@@ -15,8 +15,6 @@ async def main():
         await client.start()
         session = await client.create_session(
             {
-                # "model": "gpt-5-mini",
-                # "reasoning_effort": "high",
                 "model": "gpt-4.1",
                 "working_directory": os.getcwd(),
                 "streaming": True,

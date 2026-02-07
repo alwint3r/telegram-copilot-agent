@@ -24,3 +24,4 @@ Turn data in the conversation context and user prompt into a beautiful and usefu
         - If the folder or directory is not exist, use the `os` Python standard library to create it. 
 4. Cleanup
     - Always clean up custom python script, JSON file, CSV file, or other artifacts used to generate the plot.
+5. Provide path information of the final artifact
