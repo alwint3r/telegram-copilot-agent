@@ -1,3 +1,5 @@
+"""Minimal CLI loop for sending prompts to a Copilot SDK session."""
+
 from copilot.generated.session_events import SessionEventType
 import os
 from copilot import CopilotClient
@@ -11,6 +13,8 @@ client = CopilotClient(
 
 
 async def main():
+    """Start a session, stream responses, and keep prompting until exit."""
+
     try:
         await client.start()
         session = await client.create_session(

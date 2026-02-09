@@ -29,4 +29,3 @@ Fetch weather forecast data with location and/or time parameters from the conver
         - Combine the appropriate input parameters for the filename and the UUID v4 string.
 4. Clean up
     - Always clean up scripts used to complete the task.
-5. Provide path information to the final output artifact.
