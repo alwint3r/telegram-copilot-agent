@@ -5,6 +5,8 @@ background queue, streams progress updates, and sends generated artifacts back
 to the user when possible.
 """
 
+import argparse
+
 import asyncio
 from contextlib import suppress
 import logging
@@ -628,6 +630,7 @@ class CopilotSessionManager:
         model: str,
         timeout_seconds: int,
         reasoning_effort: str | None = None,
+        working_directory: str | None = None,
     ) -> None:
         """Initialize the manager with client and default session settings."""
 
@@ -641,6 +644,9 @@ class CopilotSessionManager:
         self._user_input_requester: (
             Callable[[int, UserInputRequest], Awaitable[UserInputResponse]] | None
         ) = None
+        self._working_directory = (
+            working_directory if working_directory is not None else os.getcwd()
+        )
 
     def set_user_input_requester(
         self, requester: Callable[[int, UserInputRequest], Awaitable[UserInputResponse]]
@@ -663,7 +669,7 @@ class CopilotSessionManager:
 
             session_config: dict[str, Any] = {
                 "model": self._model,
-                "working_directory": os.getcwd(),
+                "working_directory": self._working_directory,
                 "streaming": True,
                 "on_user_input_request": self._on_user_input_request,
                 "hooks": {
@@ -1551,9 +1557,24 @@ def restore_signal_handlers(previous_handlers: dict[int, Any]) -> None:
         signal.signal(signum, handler)
 
 
+def build_arg_parser():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--working-directory",
+        "-w",
+        help="Working directory.",
+        default=os.getcwd(),
+        required=True,
+    )
+    parser.add_argument("--skills-directory", "-s", help="Skills directory")
+    return parser
+
+
 def main() -> None:
     """Build and run the Telegram polling application."""
 
+    arg_parser = build_arg_parser()
+    args = arg_parser.parse_args()
     startup_config = load_startup_config()
 
     client_options: CopilotClientOptions = {"log_level": startup_config.log_level}
@@ -1563,6 +1584,7 @@ def main() -> None:
         model=startup_config.model,
         timeout_seconds=startup_config.timeout_seconds,
         reasoning_effort=startup_config.reasoning_effort,
+        working_directory=args.working_directory,
     )
 
     app = (
