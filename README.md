@@ -4,10 +4,16 @@ This project runs a Telegram bot that forwards user messages to the GitHub Copil
 
 ## What is in this repo
 
-- `chat-telegram.py`: main Telegram bot runtime with session management and background dispatch.
+- `chat-telegram.py`: thin executable wrapper that runs the bot CLI.
+- `copilot_telegram/`: main runtime package.
+  - `cli.py`: app wiring and startup.
+  - `handlers.py`: Telegram command/message handlers.
+  - `session_manager.py`: per-chat Copilot session lifecycle.
+  - `dispatcher.py`: background queue workers and artifact sending.
+  - `config.py`, `models.py`, `artifacts.py`, `text_utils.py`, `user_input.py`: shared runtime helpers.
 - `chat-inline.py`: minimal local CLI loop for direct Copilot chat testing.
-- `test_copilot_session_manager.py`: unit tests for session reset and concurrency behavior.
-- `.github/skills/*/SKILL.md`: prompt-execution skill docs for weather and plotting tasks.
+- `tests/`: unit and async integration-style tests.
+- `docs/`: architecture, configuration, and testing documentation.
 
 ## Quick start
 
@@ -42,3 +48,9 @@ python -m unittest -v
 - Architecture details: `docs/architecture.md`
 - Configuration reference: `docs/configuration.md`
 - Testing notes: `docs/testing.md`
+
+## Where to edit
+
+- Add or change Telegram command behavior: `copilot_telegram/handlers.py`
+- Change Copilot session policy/timeouts/reasoning behavior: `copilot_telegram/session_manager.py` and `copilot_telegram/config.py`
+- Change queue/progress/artifact behavior: `copilot_telegram/dispatcher.py`

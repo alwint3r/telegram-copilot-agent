@@ -20,10 +20,12 @@ This repository is a single-service Python bot with a small surface area:
 Keep new runtime logic in `chat-telegram.py` cohesive by extending existing domain types (`AskEventCollector`, `BackgroundDispatcher`) instead of adding parallel abstractions.
 
 ## Build, Test, and Development Commands
-- Install deps: `pip install -r requirements.txt`
-- Run bot locally: `python chat-telegram.py`
-- Run inline CLI: `python chat-inline.py`
-- Run tests: `python -m unittest -v`
+Always use `uv` for tooling for Python.
+
+- Install deps: `uv pip install -r requirements.txt`
+- Run bot locally: `uv run chat-telegram.py`
+- Run inline CLI: `uv run chat-inline.py`
+- Run tests: `uv run python -m unittest -v`
 
 Use a virtual environment for local development (`python -m venv .venv && source .venv/bin/activate`).
 
