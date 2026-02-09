@@ -66,6 +66,10 @@ def main() -> None:
         timeout_seconds=startup_config.timeout_seconds,
         reasoning_effort=startup_config.reasoning_effort,
         working_directory=args.working_directory,
+        binary_download_max_bytes=startup_config.binary_download_max_bytes,
+        binary_download_timeout_seconds=startup_config.binary_download_timeout_seconds,
+        skill_tool_max_calls_per_ask=startup_config.skill_tool_max_calls_per_ask,
+        require_explicit_artifact_intent=startup_config.require_explicit_artifact_intent,
     )
 
     app = (

@@ -36,6 +36,12 @@ python chat-telegram.py
 - `/start`: prints a short usage message.
 - `/reset`: destroys the current Copilot session for the chat.
 - Text message: queued and processed in background order per chat.
+- Copilot-generated files: sent back as Telegram file replies when they pass size/type checks; external temp-origin files are staged in managed temp storage before send.
+- Artifact delivery feedback: when artifact upload fails, the bot posts a user-visible failure summary instead of silently logging only.
+- Artifact upload resilience: file uploads use configurable timeout and retry settings for slow network/large document cases.
+- Copilot custom tools:
+  - `download_binary_file` downloads binary files from `http/https` URLs into workspace or system temp directories.
+  - `register_artifact_for_delivery` explicitly marks a local file for Telegram delivery with optional caption.
 
 ## Development
 

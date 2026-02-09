@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+import types
 
 from tests.support.module_loader import import_runtime_module
 
@@ -36,6 +37,7 @@ class ChatTelegramUtilityTests(unittest.TestCase):
 
             self.assertEqual(result.reply, "I could not generate a response.")
             self.assertEqual(result.artifact_paths, [str(artifact.resolve())])
+            self.assertEqual(result.external_artifact_paths, [])
 
     def test_collect_path_keeps_in_workspace_candidate_before_file_exists(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -47,6 +49,91 @@ class ChatTelegramUtilityTests(unittest.TestCase):
             result = collector.build_result()
 
             self.assertEqual(result.artifact_paths, [str(artifact.resolve())])
+            self.assertEqual(result.external_artifact_paths, [])
+
+    def test_collect_path_tracks_existing_external_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            with tempfile.TemporaryDirectory() as outside:
+                artifact = Path(outside, "external.zip")
+                artifact.write_bytes(b"artifact")
+
+                collector = session_module.AskEventCollector(workspace_root=workspace)
+                collector.collect_path(str(artifact))
+                result = collector.build_result()
+
+                self.assertEqual(result.artifact_paths, [])
+                self.assertEqual(
+                    result.external_artifact_paths,
+                    [str(artifact.resolve())],
+                )
+
+    def test_on_event_extracts_explicit_delivery_intent_from_json_string(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            artifact = Path(workspace, "artifact.zip")
+            artifact.write_bytes(b"artifact")
+
+            collector = session_module.AskEventCollector(workspace_root=workspace)
+            event = types.SimpleNamespace(
+                type=types.SimpleNamespace(value="tool.result"),
+                data=types.SimpleNamespace(
+                    output={
+                        "textResultForLlm": (
+                            '{"delivery_intent":true,"artifact_path":"'
+                            + str(artifact.resolve())
+                            + '","artifact_caption":"Final export"}'
+                        )
+                    }
+                ),
+            )
+            collector.on_event(event)
+            result = collector.build_result()
+
+            self.assertEqual(len(result.artifact_intents), 1)
+            self.assertEqual(result.artifact_intents[0].path, str(artifact.resolve()))
+            self.assertEqual(result.artifact_intents[0].caption, "Final export")
+
+    def test_on_event_ignores_generic_paths_in_strict_intent_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            with tempfile.TemporaryDirectory() as outside:
+                skill_md = Path(outside, ".github", "skills", "weather", "SKILL.md")
+                skill_md.parent.mkdir(parents=True, exist_ok=True)
+                skill_md.write_text("skill doc", encoding="utf-8")
+
+                collector = session_module.AskEventCollector(workspace_root=workspace)
+                event = types.SimpleNamespace(
+                    type=types.SimpleNamespace(value="tool.result"),
+                    data=types.SimpleNamespace(
+                        output={"raw_path_hint": str(skill_md)},
+                        arguments={"file": str(skill_md)},
+                    ),
+                )
+                collector.on_event(event)
+                result = collector.build_result()
+
+                self.assertEqual(result.artifact_intents, [])
+                self.assertEqual(result.artifact_paths, [])
+                self.assertEqual(result.external_artifact_paths, [])
+
+    def test_on_event_allows_generic_paths_when_strict_mode_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            with tempfile.TemporaryDirectory() as outside:
+                artifact = Path(outside, "external.zip")
+                artifact.write_bytes(b"artifact")
+
+                collector = session_module.AskEventCollector(
+                    workspace_root=workspace,
+                    require_explicit_artifact_intent=False,
+                )
+                event = types.SimpleNamespace(
+                    type=types.SimpleNamespace(value="tool.result"),
+                    data=types.SimpleNamespace(arguments={"file": str(artifact)}),
+                )
+                collector.on_event(event)
+                result = collector.build_result()
+
+                self.assertEqual(result.artifact_intents, [])
+                self.assertEqual(result.artifact_paths, [])
+                self.assertEqual(result.external_artifact_paths, [str(artifact.resolve())])
 
     def test_normalize_workspace_path_rejects_escape(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -79,6 +166,33 @@ class ChatTelegramUtilityTests(unittest.TestCase):
 
             found = artifacts_module.extract_existing_paths_from_obj(payload, workspace)
             self.assertEqual(found, {str(artifact.resolve())})
+
+    def test_extract_existing_paths_from_obj_can_include_external(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            with tempfile.TemporaryDirectory() as outside:
+                artifact = Path(outside, "external.bin")
+                artifact.write_bytes(b"artifact")
+                payload = {"value": {"path": str(artifact)}}
+
+                found = artifacts_module.extract_existing_paths_from_obj(
+                    payload,
+                    workspace,
+                    allow_outside_workspace=True,
+                )
+                self.assertEqual(found, {str(artifact.resolve())})
+
+    def test_resolve_existing_path_supports_relative_and_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            existing = Path(workspace, "artifact.bin")
+            existing.write_bytes(b"artifact")
+
+            resolved_existing = artifacts_module.resolve_existing_path(
+                "artifact.bin", workspace
+            )
+            missing = artifacts_module.resolve_existing_path("missing.bin", workspace)
+
+            self.assertEqual(resolved_existing, str(existing.resolve()))
+            self.assertIsNone(missing)
 
     def test_is_sendable_artifact_filters_text_and_size(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:

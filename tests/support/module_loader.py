@@ -15,16 +15,33 @@ def install_dependency_stubs() -> None:
     sys.modules["copilot"] = copilot_module
 
     copilot_types_module = types.ModuleType("copilot.types")
+
+    class Tool:
+        def __init__(
+            self,
+            name: str,
+            description: str,
+            handler,
+            parameters: dict[str, object] | None = None,
+        ) -> None:
+            self.name = name
+            self.description = description
+            self.handler = handler
+            self.parameters = parameters
+
     for alias in (
         "CopilotClientOptions",
         "LogLevel",
         "PreToolUseHookInput",
         "PreToolUseHookOutput",
         "SessionConfig",
+        "ToolInvocation",
+        "ToolResult",
         "UserInputRequest",
         "UserInputResponse",
     ):
         setattr(copilot_types_module, alias, dict)
+    copilot_types_module.Tool = Tool
     sys.modules["copilot.types"] = copilot_types_module
 
     dotenv_module = types.ModuleType("dotenv")
@@ -48,7 +65,11 @@ def install_dependency_stubs() -> None:
     class BadRequest(Exception):
         pass
 
+    class TimedOut(Exception):
+        pass
+
     telegram_error.BadRequest = BadRequest
+    telegram_error.TimedOut = TimedOut
     sys.modules["telegram.error"] = telegram_error
 
     telegram_ext = types.ModuleType("telegram.ext")

@@ -9,6 +9,8 @@ from tests.support.fakes import FakeClient
 from tests.support.module_loader import import_runtime_module
 
 config_module = import_runtime_module("copilot_telegram.config")
+constants_module = import_runtime_module("copilot_telegram.constants")
+custom_tools_module = import_runtime_module("copilot_telegram.custom_tools")
 session_module = import_runtime_module("copilot_telegram.session_manager")
 
 
@@ -155,6 +157,116 @@ class CopilotSessionManagerResetTests(unittest.IsolatedAsyncioTestCase):
             )
         await manager.shutdown()
 
+    async def test_session_config_registers_custom_tools(self) -> None:
+        client = FakeClient()
+        manager = self.CopilotSessionManager(
+            client=client,
+            model="gpt-5",
+            timeout_seconds=5,
+        )
+
+        await manager.ask(chat_id=12, prompt="hello")
+        tools = client.create_session_configs[0].get("tools")
+        self.assertIsInstance(tools, list)
+        self.assertTrue(tools)
+        self.assertIn(
+            custom_tools_module.DOWNLOAD_BINARY_TOOL_NAME,
+            [tool.name for tool in tools],
+        )
+        self.assertIn(
+            custom_tools_module.REGISTER_ARTIFACT_TOOL_NAME,
+            [tool.name for tool in tools],
+        )
+        await manager.shutdown()
+
+
+class CopilotSessionManagerToolGuardTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.CopilotSessionManager = session_module.CopilotSessionManager
+
+    async def test_skill_tool_is_denied_after_cap_for_same_session(self) -> None:
+        manager = self.CopilotSessionManager(
+            client=FakeClient(),
+            model="gpt-5",
+            timeout_seconds=5,
+            skill_tool_max_calls_per_ask=2,
+        )
+        invocation = {"session_id": "s1"}
+        input_data = {"toolName": "skill", "toolArgs": {"name": "weather-forecast"}}
+
+        first = await manager._on_pre_tool_use(input_data, invocation)
+        second = await manager._on_pre_tool_use(input_data, invocation)
+        third = await manager._on_pre_tool_use(input_data, invocation)
+
+        self.assertEqual(first["permissionDecision"], "allow")
+        self.assertEqual(second["permissionDecision"], "allow")
+        self.assertEqual(third["permissionDecision"], "deny")
+        self.assertEqual(third["modifiedArgs"], {"name": "weather-forecast"})
+
+    async def test_skill_tool_counter_is_isolated_per_session(self) -> None:
+        manager = self.CopilotSessionManager(
+            client=FakeClient(),
+            model="gpt-5",
+            timeout_seconds=5,
+            skill_tool_max_calls_per_ask=1,
+        )
+
+        denied = await manager._on_pre_tool_use(
+            {"toolName": "skill", "toolArgs": {}},
+            {"session_id": "s-a"},
+        )
+        self.assertEqual(denied["permissionDecision"], "allow")
+        denied = await manager._on_pre_tool_use(
+            {"toolName": "skill", "toolArgs": {}},
+            {"session_id": "s-a"},
+        )
+        self.assertEqual(denied["permissionDecision"], "deny")
+
+        allowed_other = await manager._on_pre_tool_use(
+            {"toolName": "skill", "toolArgs": {}},
+            {"session_id": "s-b"},
+        )
+        self.assertEqual(allowed_other["permissionDecision"], "allow")
+
+    async def test_non_skill_tool_is_not_capped(self) -> None:
+        manager = self.CopilotSessionManager(
+            client=FakeClient(),
+            model="gpt-5",
+            timeout_seconds=5,
+            skill_tool_max_calls_per_ask=1,
+        )
+        invocation = {"session_id": "s1"}
+
+        first = await manager._on_pre_tool_use(
+            {"toolName": "report_intent", "toolArgs": {"x": 1}},
+            invocation,
+        )
+        second = await manager._on_pre_tool_use(
+            {"toolName": "report_intent", "toolArgs": {"x": 2}},
+            invocation,
+        )
+
+        self.assertEqual(first["permissionDecision"], "allow")
+        self.assertEqual(second["permissionDecision"], "allow")
+
+    async def test_skill_tool_counter_can_reset_for_new_ask(self) -> None:
+        manager = self.CopilotSessionManager(
+            client=FakeClient(),
+            model="gpt-5",
+            timeout_seconds=5,
+            skill_tool_max_calls_per_ask=1,
+        )
+        invocation = {"session_id": "s-reset"}
+        input_data = {"toolName": "skill", "toolArgs": {}}
+
+        await manager._on_pre_tool_use(input_data, invocation)
+        denied = await manager._on_pre_tool_use(input_data, invocation)
+        self.assertEqual(denied["permissionDecision"], "deny")
+
+        manager._tool_call_counts_by_session["s-reset"] = {}
+        allowed_after_reset = await manager._on_pre_tool_use(input_data, invocation)
+        self.assertEqual(allowed_after_reset["permissionDecision"], "allow")
+
 
 class StartupConfigReasoningEffortTests(unittest.TestCase):
     def test_load_startup_config_parses_reasoning_effort(self) -> None:
@@ -189,6 +301,83 @@ class StartupConfigReasoningEffortTests(unittest.TestCase):
         self.assertFalse(
             config_module.model_supports_reasoning_effort("claude-sonnet-4.5")
         )
+
+    def test_load_dispatcher_config_sets_artifact_staging_defaults(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            config = config_module.load_dispatcher_config()
+
+        self.assertTrue(config.artifact_temp_root.endswith("copilot-telegram-artifacts"))
+        self.assertTrue(config.artifact_allow_tmp_sources_only)
+        self.assertEqual(
+            config.artifact_send_timeout_seconds,
+            constants_module.DEFAULT_ARTIFACT_SEND_TIMEOUT_SECONDS,
+        )
+        self.assertEqual(
+            config.artifact_send_retries,
+            constants_module.DEFAULT_ARTIFACT_SEND_RETRIES,
+        )
+        self.assertTrue(config.artifact_require_explicit_intent)
+
+    def test_load_dispatcher_config_parses_artifact_staging_env(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "TELEGRAM_ARTIFACT_TEMP_ROOT": "tmp/custom-staging",
+                "TELEGRAM_ARTIFACT_ALLOW_TMP_SOURCES_ONLY": "false",
+                "TELEGRAM_ARTIFACT_REQUIRE_EXPLICIT_INTENT": "false",
+                "TELEGRAM_ARTIFACT_SEND_TIMEOUT_SECONDS": "240",
+                "TELEGRAM_ARTIFACT_SEND_RETRIES": "3",
+            },
+            clear=True,
+        ):
+            config = config_module.load_dispatcher_config()
+
+        self.assertEqual(config.artifact_temp_root, os.path.abspath("tmp/custom-staging"))
+        self.assertFalse(config.artifact_allow_tmp_sources_only)
+        self.assertFalse(config.artifact_require_explicit_intent)
+        self.assertEqual(config.artifact_send_timeout_seconds, 240)
+        self.assertEqual(config.artifact_send_retries, 3)
+
+    def test_load_startup_config_sets_binary_download_defaults(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"TELEGRAM_BOT_API_KEY": "token"},
+            clear=True,
+        ):
+            config = config_module.load_startup_config()
+
+        self.assertEqual(
+            config.binary_download_max_bytes,
+            constants_module.DEFAULT_BINARY_DOWNLOAD_MAX_BYTES,
+        )
+        self.assertEqual(
+            config.binary_download_timeout_seconds,
+            constants_module.DEFAULT_BINARY_DOWNLOAD_TIMEOUT_SECONDS,
+        )
+        self.assertEqual(
+            config.skill_tool_max_calls_per_ask,
+            constants_module.DEFAULT_SKILL_TOOL_MAX_CALLS_PER_ASK,
+        )
+        self.assertTrue(config.require_explicit_artifact_intent)
+
+    def test_load_startup_config_parses_binary_download_env(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "TELEGRAM_BOT_API_KEY": "token",
+                "COPILOT_BINARY_DOWNLOAD_MAX_BYTES": "1234",
+                "COPILOT_BINARY_DOWNLOAD_TIMEOUT_SECONDS": "45",
+                "COPILOT_SKILL_TOOL_MAX_CALLS_PER_ASK": "7",
+                "TELEGRAM_ARTIFACT_REQUIRE_EXPLICIT_INTENT": "false",
+            },
+            clear=True,
+        ):
+            config = config_module.load_startup_config()
+
+        self.assertEqual(config.binary_download_max_bytes, 1234)
+        self.assertEqual(config.binary_download_timeout_seconds, 45)
+        self.assertEqual(config.skill_tool_max_calls_per_ask, 7)
+        self.assertFalse(config.require_explicit_artifact_intent)
 
 
 if __name__ == "__main__":

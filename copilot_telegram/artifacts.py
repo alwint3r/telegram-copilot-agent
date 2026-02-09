@@ -28,10 +28,26 @@ def normalize_workspace_path(value: str, workspace_root: str) -> str | None:
     return str(resolved)
 
 
+def resolve_existing_path(value: str, working_directory: str) -> str | None:
+    """Resolve a value to an existing file path, relative to working directory."""
+
+    if not value:
+        return None
+
+    candidate = Path(value)
+    if not candidate.is_absolute():
+        candidate = Path(working_directory) / candidate
+    resolved = Path(os.path.realpath(candidate))
+    if not resolved.is_file():
+        return None
+    return str(resolved)
+
+
 def extract_existing_paths_from_obj(
     payload: Any,
     workspace_root: str,
     depth: int = 0,
+    allow_outside_workspace: bool = False,
 ) -> set[str]:
     """Recursively collect existing file paths from nested payload objects."""
 
@@ -42,20 +58,35 @@ def extract_existing_paths_from_obj(
     if isinstance(payload, dict):
         for value in payload.values():
             paths.update(
-                extract_existing_paths_from_obj(value, workspace_root, depth + 1)
+                extract_existing_paths_from_obj(
+                    value,
+                    workspace_root,
+                    depth + 1,
+                    allow_outside_workspace=allow_outside_workspace,
+                )
             )
         return paths
 
     if isinstance(payload, (list, tuple)):
         for value in payload:
             paths.update(
-                extract_existing_paths_from_obj(value, workspace_root, depth + 1)
+                extract_existing_paths_from_obj(
+                    value,
+                    workspace_root,
+                    depth + 1,
+                    allow_outside_workspace=allow_outside_workspace,
+                )
             )
         return paths
 
     if isinstance(payload, str):
-        maybe_path = normalize_workspace_path(payload.strip(), workspace_root)
-        if maybe_path and os.path.isfile(maybe_path):
+        if allow_outside_workspace:
+            maybe_path = resolve_existing_path(payload.strip(), workspace_root)
+        else:
+            maybe_path = normalize_workspace_path(payload.strip(), workspace_root)
+            if maybe_path and not os.path.isfile(maybe_path):
+                maybe_path = None
+        if maybe_path:
             paths.add(maybe_path)
     return paths
 

@@ -102,6 +102,10 @@ class FakeBot:
         self.sent_photos: list[dict[str, object]] = []
         self.sent_documents: list[dict[str, object]] = []
         self.fail_send_message_count = 0
+        self.fail_send_photo_count = 0
+        self.fail_send_document_count = 0
+        self.fail_send_photo_timeout_count = 0
+        self.fail_send_document_timeout_count = 0
 
     async def send_message(self, chat_id: int, text: str, **_kwargs):
         if self.fail_send_message_count > 0:
@@ -120,10 +124,22 @@ class FakeBot:
         return None
 
     async def send_photo(self, **_kwargs) -> None:
+        if self.fail_send_photo_timeout_count > 0:
+            self.fail_send_photo_timeout_count -= 1
+            raise TimeoutError("Timed out.")
+        if self.fail_send_photo_count > 0:
+            self.fail_send_photo_count -= 1
+            raise RuntimeError("send_photo failed")
         self.sent_photos.append(dict(_kwargs))
         return None
 
     async def send_document(self, **_kwargs) -> None:
+        if self.fail_send_document_timeout_count > 0:
+            self.fail_send_document_timeout_count -= 1
+            raise TimeoutError("Timed out.")
+        if self.fail_send_document_count > 0:
+            self.fail_send_document_count -= 1
+            raise RuntimeError("send_document failed")
         self.sent_documents.append(dict(_kwargs))
         return None
 
