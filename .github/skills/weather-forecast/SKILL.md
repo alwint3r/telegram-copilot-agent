@@ -1,31 +1,66 @@
 ---
 name: weather-forecast
-description: Get weather forecast data from Open Meteo for a specific time and/or location name
+description: Fetch reliable weather forecasts from Open-Meteo using explicit location and time resolution rules
 ---
 
 # Weather Forecast
 
 ## Goal
 
-Fetch weather forecast data with location and/or time parameters from the conversation context and user prompt.
+Fetch weather forecast data from Open-Meteo using location and time parameters inferred from conversation context and the current user prompt.
+
+Always produce deterministic output artifacts and avoid ambiguous interpretation.
 
 ## Workflow
 
-1. Infer the time information from the context and prompt.
-    - If no specific time information, ask the user to provide time information.
-    - If no time interval provided and/or time (specific date, start/end date), ask the user to provide it.
-2. Infer the location information from the context and prompt.
-    - If no location information found, ask the user to provide the location information.
-    - Use the web search tool to infer the coordinates of the provided location information.
-3. Use Open Meteo APIs as the primary source of the weather information.
-    - Always use `uv` for python-related operations.
-    - If third-party or external libraries are required
-        - Check the existing installation using `uv pip freeze`
-        - Install them using `uv pip install` if it's absolutely necessary to do so.
-    - Output data in JSON format.
-    - Save the result inside `output/weather-forecast` directory.
-        - If the directory is not exist, create it using the `os` Python standard library.
-    - Use unique filename for every result artifact.
-        - Combine the appropriate input parameters for the filename and the UUID v4 string.
-4. Clean up
-    - Always clean up scripts used to complete the task.
+1. Resolve user intent into request parameters.
+   - Required: location.
+   - Optional: time window.
+   - If location is missing, ask one concise follow-up question.
+   - If time is missing, default to "today" in the resolved location timezone.
+   - Convert relative time terms (for example: "tomorrow", "next Friday") to absolute dates before calling APIs.
+
+2. Resolve location with Open-Meteo geocoding first.
+   - Use Open-Meteo geocoding API to convert location text to coordinates.
+   - Do not use generic web search for coordinates unless Open-Meteo geocoding fails.
+   - If multiple geocoding matches are plausible, ask one disambiguation question (for example: "Springfield, IL or Springfield, MA?").
+   - If no geocoding result is found, ask for country/state context or direct coordinates.
+
+3. Build a valid forecast query.
+   - Use Open-Meteo forecast API as the primary weather source.
+   - Select hourly or daily fields based on request scope:
+     - Intra-day or hour-specific requests: include hourly fields.
+     - Day-level requests: include daily fields.
+   - Validate start/end dates:
+     - If only one date is given, use it for both start and end.
+     - If start is after end, ask for correction.
+
+4. Generate deterministic output.
+   - Always use `uv` for Python-related operations.
+   - Prefer Python standard library for request orchestration and file handling.
+   - Write one JSON artifact to `output/weather-forecast`.
+   - If the directory does not exist, create it using Python standard library (`os`).
+   - Use a unique filename format:
+     - `weather_<location-slug>_<start-date>_<uuid8>.json`
+   - Slugify location for filename safety (lowercase letters, numbers, dashes only).
+
+5. Return both a concise summary and structured data artifact.
+   - Provide a short human-readable summary in the assistant response.
+   - Include artifact path in the response.
+   - JSON output must include this shape:
+     - `request`: original request fields inferred from prompt/context.
+     - `resolved_location`: name, latitude, longitude, country, timezone.
+     - `forecast_window`: start_date, end_date, timezone.
+     - `units`: temperature/wind/precipitation units used.
+     - `data`: hourly and/or daily forecast arrays returned by API.
+     - `source`: Open-Meteo endpoint URLs used.
+     - `generated_at`: ISO-8601 timestamp in UTC.
+
+6. Handle failures explicitly.
+   - On transient network/API errors, retry once.
+   - If still failing, return a concise error with the failed step and missing requirement.
+   - Never fabricate weather values.
+
+7. Clean up temporary files only.
+   - Remove temporary scripts or intermediate files created for the task.
+   - Do not delete final artifacts in `output/weather-forecast`.
