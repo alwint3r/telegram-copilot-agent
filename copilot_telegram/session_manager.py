@@ -1,11 +1,11 @@
 """Copilot session lifecycle and streaming response collection."""
 
 import asyncio
-import json
 import logging
 import os
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Awaitable, Callable, cast
 
 from copilot import CopilotClient
@@ -17,24 +17,17 @@ from copilot.types import (
     UserInputResponse,
 )
 
-from .artifacts import (
-    extract_existing_paths_from_obj,
-    normalize_workspace_path,
-    resolve_existing_path,
-)
 from .config import (
     is_reasoning_effort_unsupported_error,
     model_supports_reasoning_effort,
 )
-from .custom_tools import build_custom_tools
 from .constants import (
-    DEFAULT_ARTIFACT_REQUIRE_EXPLICIT_INTENT,
-    DEFAULT_MAX_ARTIFACT_BYTES,
     DEFAULT_BINARY_DOWNLOAD_MAX_BYTES,
     DEFAULT_BINARY_DOWNLOAD_TIMEOUT_SECONDS,
     DEFAULT_SKILL_TOOL_MAX_CALLS_PER_ASK,
 )
-from .models import ArtifactIntent, AskResult, SessionState
+from .custom_tools import build_custom_tools
+from .models import AskResult, SessionState
 from .user_input import default_user_input_answer
 
 logger = logging.getLogger(__name__)
@@ -44,31 +37,12 @@ logger = logging.getLogger(__name__)
 class AskEventCollector:
     """Collects streaming Copilot events and normalizes output state."""
 
-    workspace_root: str
     done: asyncio.Event = field(default_factory=asyncio.Event)
     updated: asyncio.Event = field(default_factory=asyncio.Event)
     chunks: list[str] = field(default_factory=list)
     final_content: str = ""
     pending_statuses: list[str] = field(default_factory=list)
-    artifact_paths: set[str] = field(default_factory=set)
-    external_artifact_paths: set[str] = field(default_factory=set)
-    artifact_intents_by_path: dict[str, ArtifactIntent] = field(default_factory=dict)
-    require_explicit_artifact_intent: bool = True
     terminal_error: str | None = None
-
-    def collect_path(self, path_value: str | None) -> None:
-        """Collect workspace artifact candidates and existing external files."""
-
-        if not path_value:
-            return
-        normalized = normalize_workspace_path(path_value, self.workspace_root)
-        if normalized:
-            self.artifact_paths.add(normalized)
-            return
-
-        external = resolve_existing_path(path_value, self.workspace_root)
-        if external:
-            self.external_artifact_paths.add(external)
 
     def on_event(self, event: Any) -> None:
         """Handle one SDK stream event and update aggregate response state."""
@@ -78,19 +52,35 @@ class AskEventCollector:
 
         if event_type.startswith("tool."):
             if event_type == "tool.execution_complete":
+                result = getattr(event.data, "result", None)
+                content = (
+                    getattr(result.content, "content", None)
+                    if result is not None
+                    else None
+                )
                 logger.info(
-                    f"event: {event_type}, tool_call_id: {event.data.tool_call_id} result: {event.data.result.content}"
+                    "event: %s, tool_call_id: %s result: %s",
+                    event_type,
+                    event.data.tool_call_id,
+                    content,
                 )
             elif event_type == "tool.execution_start":
                 logger.info(
-                    f"evnet: {event_type}, tool_call_id: {event.data.tool_call_id}, tool_name: {event.data.tool_name}, arguments: {event.data.arguments}"
+                    "event: %s, tool_call_id: %s, tool_name: %s, arguments: %s",
+                    event_type,
+                    event.data.tool_call_id,
+                    event.data.tool_name,
+                    event.data.arguments,
                 )
             elif event_type == "tool.execution_partial_result":
                 logger.info(
-                    f"event: {event_type}, tool_call_id: {event.data.tool_call_id}, result: {event.data.partial_output}"
+                    "event: %s, tool_call_id: %s, result: %s",
+                    event_type,
+                    event.data.tool_call_id,
+                    event.data.partial_output,
                 )
             else:
-                logger.info(f"event: {event.type} data: {event.data}")
+                logger.info("event: %s data: %s", event.type, event.data)
 
         if event_type in {"assistant.message_delta", "assistant.reasoning_delta"}:
             self.chunks.append(getattr(data, "delta_content", "") or "")
@@ -113,132 +103,6 @@ class AskEventCollector:
             detail = self._build_event_detail(event_type, data)
             self.pending_statuses.append(detail)
             self.updated.set()
-
-        if data is None:
-            return
-
-        for intent in self._extract_explicit_artifact_intents(data):
-            self._collect_artifact_intent(intent)
-
-        if self.require_explicit_artifact_intent:
-            return
-
-        self.collect_path(getattr(data, "path", None))
-        attachments = getattr(data, "attachments", None) or []
-        for attachment in attachments:
-            self.collect_path(getattr(attachment, "path", None))
-            self.collect_path(getattr(attachment, "file_path", None))
-        for payload in (
-            getattr(data, "arguments", None),
-            getattr(data, "input", None),
-            getattr(data, "output", None),
-        ):
-            for path in extract_existing_paths_from_obj(
-                payload,
-                self.workspace_root,
-                allow_outside_workspace=True,
-            ):
-                normalized = normalize_workspace_path(path, self.workspace_root)
-                if normalized:
-                    self.artifact_paths.add(normalized)
-                else:
-                    self.external_artifact_paths.add(path)
-
-    def _collect_artifact_intent(self, intent: ArtifactIntent) -> None:
-        """Record one explicit artifact intent with best-effort caption merge."""
-
-        normalized = normalize_workspace_path(intent.path, self.workspace_root)
-        if normalized:
-            path = normalized
-            self.artifact_paths.add(path)
-        else:
-            resolved = resolve_existing_path(intent.path, self.workspace_root)
-            if not resolved:
-                return
-            path = resolved
-            self.external_artifact_paths.add(path)
-
-        caption = intent.caption.strip() if intent.caption else None
-        existing = self.artifact_intents_by_path.get(path)
-        if existing is None:
-            self.artifact_intents_by_path[path] = ArtifactIntent(
-                path=path,
-                caption=caption,
-            )
-            return
-        if existing.caption is None and caption:
-            self.artifact_intents_by_path[path] = ArtifactIntent(
-                path=path,
-                caption=caption,
-            )
-
-    def _extract_explicit_artifact_intents(
-        self,
-        payload: Any,
-        depth: int = 0,
-    ) -> list[ArtifactIntent]:
-        """Extract explicit delivery intents from nested payload objects."""
-
-        if payload is None or depth > 4:
-            return []
-
-        intents: list[ArtifactIntent] = []
-        if isinstance(payload, dict):
-            intent = self._try_parse_delivery_intent(payload)
-            if intent is not None:
-                intents.append(intent)
-            for value in payload.values():
-                intents.extend(
-                    self._extract_explicit_artifact_intents(value, depth + 1)
-                )
-            return intents
-
-        if isinstance(payload, (list, tuple)):
-            for value in payload:
-                intents.extend(
-                    self._extract_explicit_artifact_intents(value, depth + 1)
-                )
-            return intents
-
-        if isinstance(payload, str):
-            stripped = payload.strip()
-            if stripped.startswith("{") or stripped.startswith("["):
-                try:
-                    parsed = json.loads(stripped)
-                except json.JSONDecodeError:
-                    return []
-                intents.extend(
-                    self._extract_explicit_artifact_intents(parsed, depth + 1)
-                )
-            return intents
-
-        payload_dict = getattr(payload, "__dict__", None)
-        if isinstance(payload_dict, dict):
-            intents.extend(
-                self._extract_explicit_artifact_intents(payload_dict, depth + 1)
-            )
-        return intents
-
-    @staticmethod
-    def _try_parse_delivery_intent(payload: dict[str, Any]) -> ArtifactIntent | None:
-        """Parse one explicit delivery intent dictionary when present."""
-
-        marker = payload.get("delivery_intent", payload.get("deliveryIntent"))
-        if marker is not True:
-            return None
-
-        path_value = payload.get("artifact_path", payload.get("artifactPath"))
-        if not isinstance(path_value, str) or not path_value.strip():
-            return None
-
-        caption_value = payload.get("artifact_caption", payload.get("artifactCaption"))
-        caption: str | None = None
-        if caption_value is not None:
-            trimmed = str(caption_value).strip()
-            if trimmed:
-                caption = trimmed
-
-        return ArtifactIntent(path=path_value.strip(), caption=caption)
 
     @staticmethod
     def _build_event_detail(event_type: str, data: Any) -> str:
@@ -280,15 +144,7 @@ class AskEventCollector:
         reply = self.snapshot()
         if not reply:
             reply = "I could not generate a response."
-        return AskResult(
-            reply=reply,
-            artifact_paths=sorted(self.artifact_paths),
-            external_artifact_paths=sorted(self.external_artifact_paths),
-            artifact_intents=sorted(
-                self.artifact_intents_by_path.values(),
-                key=lambda item: item.path,
-            ),
-        )
+        return AskResult(reply=reply)
 
 
 class CopilotSessionManager:
@@ -301,10 +157,10 @@ class CopilotSessionManager:
         timeout_seconds: int,
         reasoning_effort: str | None = None,
         working_directory: str | None = None,
+        skills_directory: str | None = None,
         binary_download_max_bytes: int = DEFAULT_BINARY_DOWNLOAD_MAX_BYTES,
         binary_download_timeout_seconds: int = DEFAULT_BINARY_DOWNLOAD_TIMEOUT_SECONDS,
         skill_tool_max_calls_per_ask: int = DEFAULT_SKILL_TOOL_MAX_CALLS_PER_ASK,
-        require_explicit_artifact_intent: bool = DEFAULT_ARTIFACT_REQUIRE_EXPLICIT_INTENT,
     ) -> None:
         """Initialize the manager with client and default session settings."""
 
@@ -321,14 +177,17 @@ class CopilotSessionManager:
         self._working_directory = (
             working_directory if working_directory is not None else os.getcwd()
         )
+        self._skills_directory = (
+            skills_directory
+            if skills_directory is not None
+            else Path(self._working_directory) / ".github/skills"
+        )
         self._skill_tool_max_calls_per_ask = max(1, skill_tool_max_calls_per_ask)
-        self._require_explicit_artifact_intent = require_explicit_artifact_intent
         self._tool_call_counts_by_session: dict[str, dict[str, int]] = {}
         self._custom_tools = build_custom_tools(
             working_directory=self._working_directory,
             max_download_bytes=binary_download_max_bytes,
             download_timeout_seconds=binary_download_timeout_seconds,
-            max_artifact_bytes=DEFAULT_MAX_ARTIFACT_BYTES,
         )
 
     @staticmethod
@@ -364,6 +223,7 @@ class CopilotSessionManager:
             session_config: dict[str, Any] = {
                 "model": self._model,
                 "working_directory": self._working_directory,
+                "skills_directory": self._skills_directory,
                 "streaming": True,
                 "tools": self._custom_tools,
                 "on_user_input_request": self._on_user_input_request,
@@ -527,10 +387,7 @@ class CopilotSessionManager:
         session_id = state.session_id
         if session_id:
             self._tool_call_counts_by_session[session_id] = {}
-        collector = AskEventCollector(
-            workspace_root=self._working_directory,
-            require_explicit_artifact_intent=self._require_explicit_artifact_intent,
-        )
+        collector = AskEventCollector()
         unsubscribe = state.session.on(collector.on_event)
         deadline = time.monotonic() + self._timeout_seconds
         try:

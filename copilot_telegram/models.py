@@ -36,31 +36,10 @@ class ChatRuntime:
 
 
 @dataclass
-class ArtifactIntent:
-    """One explicit artifact delivery intent emitted during a request."""
-
-    path: str
-    caption: str | None = None
-
-
-@dataclass
-class ArtifactDeliveryReport:
-    """Summary of artifact send attempts for one Telegram reply."""
-
-    attempted: int = 0
-    sent: int = 0
-    failed: list[str] = field(default_factory=list)
-    skipped: list[str] = field(default_factory=list)
-
-
-@dataclass
 class AskResult:
-    """Final assistant reply plus discovered artifact file paths."""
+    """Final assistant reply payload returned from one ask call."""
 
     reply: str
-    artifact_paths: list[str] = field(default_factory=list)
-    external_artifact_paths: list[str] = field(default_factory=list)
-    artifact_intents: list[ArtifactIntent] = field(default_factory=list)
 
 
 @dataclass
@@ -75,17 +54,10 @@ class PendingUserInput:
 
 @dataclass(frozen=True)
 class DispatcherConfig:
-    """Runtime settings for background dispatch and artifact sending."""
+    """Runtime settings for background dispatch behavior."""
 
     user_input_timeout_seconds: int
-    max_artifacts_per_request: int
-    max_artifact_bytes: int
-    artifact_send_timeout_seconds: int
-    artifact_send_retries: int
     shutdown_drain_timeout_seconds: int
-    artifact_temp_root: str
-    artifact_allow_tmp_sources_only: bool
-    artifact_require_explicit_intent: bool
 
 
 @dataclass(frozen=True)
@@ -100,4 +72,3 @@ class StartupConfig:
     binary_download_max_bytes: int
     binary_download_timeout_seconds: int
     skill_tool_max_calls_per_ask: int
-    require_explicit_artifact_intent: bool

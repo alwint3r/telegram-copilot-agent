@@ -7,6 +7,7 @@ from typing import Any
 
 from copilot import CopilotClient
 from telegram import Update
+from telegram.error import NetworkError
 from telegram.ext import Application, ContextTypes
 
 from .dispatcher import BackgroundDispatcher
@@ -122,6 +123,35 @@ async def on_shutdown(application: Application) -> None:
     await dispatcher.shutdown()
     await manager.shutdown()
     await client.stop()
+
+
+async def application_error_handler(
+    update: object,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Handle uncaught Telegram framework errors with structured logging."""
+
+    error = getattr(context, "error", None)
+    update_type = type(update).__name__ if update is not None else "None"
+    if isinstance(error, NetworkError):
+        logger.warning(
+            "Telegram network error in application handler (update_type=%s): %s",
+            update_type,
+            error,
+        )
+        return
+    if isinstance(error, BaseException):
+        logger.error(
+            "Unhandled Telegram application error (update_type=%s): %s",
+            update_type,
+            error,
+            exc_info=(type(error), error, error.__traceback__),
+        )
+        return
+    logger.error(
+        "Unhandled Telegram application error (update_type=%s) without exception payload",
+        update_type,
+    )
 
 
 def install_shutdown_signal_handlers(

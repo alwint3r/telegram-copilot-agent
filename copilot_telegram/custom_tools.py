@@ -12,11 +12,7 @@ from urllib.parse import unquote, urlparse
 import httpx
 from copilot.types import Tool
 
-from .artifacts import is_sendable_artifact
-from .constants import DEFAULT_MAX_ARTIFACT_BYTES
-
 DOWNLOAD_BINARY_TOOL_NAME = "download_binary_file"
-REGISTER_ARTIFACT_TOOL_NAME = "register_artifact_for_delivery"
 _DOWNLOAD_DEFAULT_FILENAME = "download.bin"
 _DOWNLOAD_CHUNK_BYTES = 64 * 1024
 
@@ -131,7 +127,6 @@ def build_custom_tools(
     working_directory: str,
     max_download_bytes: int,
     download_timeout_seconds: int,
-    max_artifact_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES,
 ) -> list[Tool]:
     """Build and return custom SDK tools for one Copilot session."""
 
@@ -156,9 +151,7 @@ def build_custom_tools(
             output_dir.mkdir(parents=True, exist_ok=True)
 
             raw_filename = arguments.get("filename")
-            requested_filename = (
-                None if raw_filename is None else str(raw_filename)
-            )
+            requested_filename = None if raw_filename is None else str(raw_filename)
             filename = _resolve_filename(url, requested_filename)
             target_path = Path(os.path.realpath(output_dir / filename))
             if not _is_within_root(target_path, output_dir):
@@ -191,52 +184,6 @@ def build_custom_tools(
                 "toolTelemetry": {},
             }
 
-    async def _register_artifact_for_delivery_handler(
-        invocation: dict[str, Any],
-    ) -> dict[str, Any]:
-        try:
-            arguments = _resolve_invocation_args(invocation)
-            path_value = str(arguments.get("path", "")).strip()
-            if not path_value:
-                raise ValueError("path is required.")
-
-            artifact_path = _resolve_path_within_allowed_roots(
-                path_value,
-                workspace_root=workspace_root,
-                allowed_roots=allowed_roots,
-            )
-            artifact_path_str = str(artifact_path)
-            if not is_sendable_artifact(artifact_path_str, max_artifact_bytes):
-                raise ValueError("path is not an eligible sendable artifact.")
-
-            caption_value = arguments.get("caption")
-            caption = None
-            if caption_value is not None:
-                trimmed = str(caption_value).strip()
-                if trimmed:
-                    caption = trimmed
-
-            intent_payload: dict[str, Any] = {
-                "delivery_intent": True,
-                "artifact_path": artifact_path_str,
-            }
-            if caption is not None:
-                intent_payload["artifact_caption"] = caption
-
-            return {
-                "resultType": "success",
-                "textResultForLlm": json.dumps(intent_payload, separators=(",", ":")),
-                "sessionLog": f"Registered artifact for delivery: {artifact_path_str}",
-                "toolTelemetry": {},
-            }
-        except Exception as exc:
-            return {
-                "resultType": "failure",
-                "textResultForLlm": str(exc),
-                "error": str(exc),
-                "toolTelemetry": {},
-            }
-
     return [
         Tool(
             name=DOWNLOAD_BINARY_TOOL_NAME,
@@ -254,20 +201,5 @@ def build_custom_tools(
                 "required": ["url", "output_dir"],
             },
             handler=_download_binary_file_handler,
-        ),
-        Tool(
-            name=REGISTER_ARTIFACT_TOOL_NAME,
-            description=(
-                "Register an already generated local artifact file for Telegram delivery."
-            ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string"},
-                    "caption": {"type": "string"},
-                },
-                "required": ["path"],
-            },
-            handler=_register_artifact_for_delivery_handler,
         ),
     ]

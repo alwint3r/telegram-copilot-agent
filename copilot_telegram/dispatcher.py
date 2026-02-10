@@ -3,37 +3,23 @@
 import asyncio
 from contextlib import suppress
 import logging
-import mimetypes
-import os
-from pathlib import Path
-import shutil
-import tempfile
 import threading
 import time
-import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
 from copilot.types import UserInputRequest, UserInputResponse
 from telegram.constants import ChatAction
-from telegram.error import BadRequest, TimedOut
+from telegram.error import BadRequest
 from telegram.ext import Application
 
-from .artifacts import is_sendable_artifact
 from .config import load_dispatcher_config
 from .constants import (
     HEARTBEAT_INTERVAL_SECONDS,
     PROGRESS_EDIT_THROTTLE_SECONDS,
     PROGRESS_PREVIEW_CHARS,
 )
-from .models import (
-    ArtifactDeliveryReport,
-    ArtifactIntent,
-    AskResult,
-    ChatRuntime,
-    PendingUserInput,
-    PromptItem,
-)
+from .models import ChatRuntime, PendingUserInput, PromptItem
 from .session_manager import CopilotSessionManager
 from .text_utils import split_for_telegram
 from .user_input import default_user_input_answer
@@ -303,230 +289,6 @@ class BackgroundDispatcher:
             pending.future.set_result(result)
         return True, "Response received. Continuing now."
 
-    async def _send_artifacts(
-        self,
-        bot: Any,
-        chat_id: int,
-        artifact_candidates: list[ArtifactIntent],
-        reply_to_message_id: int | None,
-        allowed_roots: list[str] | None = None,
-    ) -> ArtifactDeliveryReport:
-        """Send eligible generated artifacts back to Telegram chat."""
-
-        report = ArtifactDeliveryReport()
-        seen: set[str] = set()
-        roots = allowed_roots or [os.getcwd()]
-        allowed_root_paths = [
-            Path(os.path.realpath(root)).resolve(strict=False) for root in roots
-        ]
-        for artifact in artifact_candidates:
-            normalized = os.path.realpath(artifact.path)
-            normalized_path = Path(normalized)
-            file_label = os.path.basename(normalized) or normalized
-
-            if not any(
-                self._is_path_within_root(normalized_path, root)
-                for root in allowed_root_paths
-            ):
-                logger.warning("Skipping artifact outside allowed roots: %s", normalized)
-                report.skipped.append(f"{file_label}: outside allowed roots")
-                continue
-
-            if normalized in seen:
-                report.skipped.append(f"{file_label}: duplicate candidate")
-                continue
-            seen.add(normalized)
-
-            if not is_sendable_artifact(normalized, self._config.max_artifact_bytes):
-                report.skipped.append(f"{file_label}: not sendable (type/size/path)")
-                continue
-            if report.sent >= self._config.max_artifacts_per_request:
-                report.skipped.append(
-                    f"{file_label}: over per-request artifact limit "
-                    f"({self._config.max_artifacts_per_request})"
-                )
-                break
-
-            extension = Path(normalized).suffix.lower()
-            mime_type, _ = mimetypes.guess_type(normalized)
-            caption = artifact.caption or f"Artifact: {file_label}"
-            report.attempted += 1
-
-            try:
-                max_attempts = 1 + self._config.artifact_send_retries
-                last_timeout: Exception | None = None
-                sent = False
-                for attempt in range(max_attempts):
-                    timeout_seconds = self._config.artifact_send_timeout_seconds * (
-                        attempt + 1
-                    )
-                    timeout_kwargs = {
-                        "connect_timeout": timeout_seconds,
-                        "write_timeout": timeout_seconds,
-                        "read_timeout": timeout_seconds,
-                        "pool_timeout": timeout_seconds,
-                    }
-                    try:
-                        if extension in {
-                            ".png",
-                            ".jpg",
-                            ".jpeg",
-                            ".gif",
-                            ".webp",
-                            ".bmp",
-                            ".tiff",
-                        } or (mime_type and mime_type.startswith("image/")):
-                            with open(normalized, "rb") as file_obj:
-                                await bot.send_photo(
-                                    chat_id=chat_id,
-                                    photo=file_obj,
-                                    caption=caption,
-                                    reply_to_message_id=reply_to_message_id,
-                                    allow_sending_without_reply=True,
-                                    **timeout_kwargs,
-                                )
-                        else:
-                            with open(normalized, "rb") as file_obj:
-                                await bot.send_document(
-                                    chat_id=chat_id,
-                                    document=file_obj,
-                                    caption=caption,
-                                    reply_to_message_id=reply_to_message_id,
-                                    allow_sending_without_reply=True,
-                                    **timeout_kwargs,
-                                )
-                        sent = True
-                        break
-                    except (TimedOut, TimeoutError) as exc:
-                        last_timeout = exc
-                        if attempt + 1 >= max_attempts:
-                            raise
-                        logger.warning(
-                            "Timed out sending artifact %s (attempt %s/%s). Retrying.",
-                            normalized,
-                            attempt + 1,
-                            max_attempts,
-                        )
-                if not sent and last_timeout is not None:
-                    raise last_timeout
-                report.sent += 1
-            except Exception as exc:
-                report.failed.append(f"{file_label}: {exc}")
-                logger.exception("Failed to send artifact %s", normalized)
-
-        if report.sent > 0:
-            await bot.send_message(
-                chat_id=chat_id,
-                text=f"Sent {report.sent} artifact(s).",
-                reply_to_message_id=reply_to_message_id,
-                allow_sending_without_reply=True,
-            )
-        return report
-
-    @staticmethod
-    def _is_path_within_root(path: Path, root: Path) -> bool:
-        """Return True when a path is inside a root directory."""
-
-        try:
-            path.relative_to(root)
-            return True
-        except ValueError:
-            return False
-
-    def _is_allowed_external_source(self, source_path: Path) -> bool:
-        """Return True when an external artifact source path is allowed."""
-
-        if not self._config.artifact_allow_tmp_sources_only:
-            return True
-        tmp_root = Path(os.path.realpath(tempfile.gettempdir())).resolve(strict=False)
-        return self._is_path_within_root(source_path, tmp_root)
-
-    def _stage_external_artifacts(
-        self,
-        chat_id: int,
-        request_id: int,
-        external_candidates: list[ArtifactIntent],
-    ) -> tuple[list[ArtifactIntent], Path | None]:
-        """Copy allowed external artifacts into managed temp storage for sending."""
-
-        if not external_candidates:
-            return [], None
-
-        staging_root = Path(self._config.artifact_temp_root).resolve(strict=False)
-        request_dir = (
-            staging_root
-            / f"chat-{chat_id}"
-            / f"request-{request_id}-{uuid.uuid4().hex[:8]}"
-        )
-
-        try:
-            request_dir.mkdir(parents=True, exist_ok=True)
-        except OSError:
-            logger.exception("Failed to create staging directory: %s", request_dir)
-            return [], None
-
-        staged_paths: list[ArtifactIntent] = []
-        seen_sources: set[str] = set()
-
-        for candidate in external_candidates:
-            source = Path(os.path.realpath(candidate.path))
-            source_str = str(source)
-            if source_str in seen_sources:
-                continue
-            seen_sources.add(source_str)
-
-            if not source.is_file():
-                continue
-            if not self._is_allowed_external_source(source):
-                logger.warning("Skipping non-temp external artifact source: %s", source)
-                continue
-            if not is_sendable_artifact(source_str, self._config.max_artifact_bytes):
-                continue
-
-            destination = request_dir / source.name
-            if destination.exists():
-                destination = request_dir / f"{source.stem}-{uuid.uuid4().hex[:8]}{source.suffix}"
-
-            try:
-                shutil.copy2(source, destination)
-            except OSError:
-                logger.exception("Failed to stage artifact %s", source)
-                continue
-
-            staged_paths.append(
-                ArtifactIntent(
-                    path=str(destination.resolve(strict=False)),
-                    caption=candidate.caption,
-                )
-            )
-            if len(staged_paths) >= self._config.max_artifacts_per_request:
-                break
-
-        return staged_paths, request_dir
-
-    def _cleanup_staged_artifact_dir(self, request_dir: Path | None) -> None:
-        """Best-effort cleanup for one request staging directory."""
-
-        if request_dir is None:
-            return
-        staging_root = Path(self._config.artifact_temp_root).resolve(strict=False)
-
-        try:
-            shutil.rmtree(request_dir)
-        except FileNotFoundError:
-            return
-        except OSError:
-            logger.warning("Failed to cleanup staged artifacts: %s", request_dir)
-            return
-
-        parent = request_dir.parent
-        while parent != staging_root and parent.exists():
-            try:
-                parent.rmdir()
-            except OSError:
-                break
-            parent = parent.parent
-
     def _mark_runtime_worker_stopped(self, chat_id: int, runtime: ChatRuntime) -> None:
         """Clear worker reference while the dispatcher lock is already held."""
 
@@ -610,94 +372,6 @@ class BackgroundDispatcher:
                 item.request_id,
             )
 
-    def _collect_artifact_candidates(
-        self, ask_result: AskResult
-    ) -> tuple[list[ArtifactIntent], list[ArtifactIntent]]:
-        """Collect direct and external candidates with explicit intent priority."""
-
-        workspace_root = Path(os.path.realpath(os.getcwd())).resolve(strict=False)
-        direct: list[ArtifactIntent] = []
-        external: list[ArtifactIntent] = []
-        direct_by_path: dict[str, ArtifactIntent] = {}
-        external_by_path: dict[str, ArtifactIntent] = {}
-
-        def add_direct_candidate(path_value: str, caption: str | None) -> None:
-            normalized = os.path.realpath(path_value)
-            existing = direct_by_path.get(normalized)
-            if existing is None:
-                direct_by_path[normalized] = ArtifactIntent(path=normalized, caption=caption)
-                return
-            if existing.caption is None and caption:
-                direct_by_path[normalized] = ArtifactIntent(path=normalized, caption=caption)
-
-        def add_external_candidate(path_value: str, caption: str | None) -> None:
-            normalized = os.path.realpath(path_value)
-            existing = external_by_path.get(normalized)
-            if existing is None:
-                external_by_path[normalized] = ArtifactIntent(
-                    path=normalized, caption=caption
-                )
-                return
-            if existing.caption is None and caption:
-                external_by_path[normalized] = ArtifactIntent(
-                    path=normalized, caption=caption
-                )
-
-        for intent in ask_result.artifact_intents:
-            if self._is_path_within_root(Path(os.path.realpath(intent.path)), workspace_root):
-                add_direct_candidate(intent.path, intent.caption)
-            else:
-                add_external_candidate(intent.path, intent.caption)
-        if not self._config.artifact_require_explicit_intent:
-            for artifact_path in ask_result.artifact_paths:
-                add_direct_candidate(artifact_path, None)
-            for external_path in ask_result.external_artifact_paths:
-                add_external_candidate(external_path, None)
-
-        direct.extend(direct_by_path.values())
-        external.extend(external_by_path.values())
-        return direct, external
-
-    async def _send_artifact_delivery_summary(
-        self,
-        bot: Any,
-        chat_id: int,
-        reply_to_message_id: int | None,
-        report: ArtifactDeliveryReport,
-    ) -> None:
-        """Send user-visible artifact delivery outcome when failures occur."""
-
-        reasons = [*report.failed, *report.skipped]
-        if not reasons:
-            return
-
-        detail = "; ".join(reasons[:2])
-        if report.sent == 0:
-            total = report.attempted + len(report.skipped)
-            text = (
-                f"I found {total} artifact(s) but could not deliver them. "
-                f"{detail}"
-            )
-        elif report.failed:
-            text = (
-                f"Delivered {report.sent} artifact(s), but {len(report.failed)} failed. "
-                f"{detail}"
-            )
-        else:
-            return
-
-        try:
-            await bot.send_message(
-                chat_id=chat_id,
-                text=text,
-                reply_to_message_id=reply_to_message_id,
-                allow_sending_without_reply=True,
-            )
-        except Exception:
-            logger.exception(
-                "Failed to send artifact delivery summary for chat_id=%s", chat_id
-            )
-
     async def _chat_worker(self, chat_id: int, runtime: ChatRuntime) -> None:
         """Process queued prompts for a single chat in FIFO order."""
 
@@ -715,7 +389,6 @@ class BackgroundDispatcher:
 
             reporter: WorkerProgressReporter | None = None
             heartbeat_task: asyncio.Task | None = None
-            staged_dir: Path | None = None
             try:
                 reporter = await self._create_progress_reporter(bot, chat_id, item)
                 heartbeat_task = asyncio.create_task(reporter.heartbeat())
@@ -733,29 +406,6 @@ class BackgroundDispatcher:
                     chat_id=chat_id,
                     reply_to_message_id=item.reply_to_message_id,
                     reply=ask_result.reply,
-                )
-
-                direct_candidates, external_candidates = self._collect_artifact_candidates(
-                    ask_result=ask_result,
-                )
-                staged_candidates, staged_dir = self._stage_external_artifacts(
-                    chat_id=chat_id,
-                    request_id=item.request_id,
-                    external_candidates=external_candidates,
-                )
-                artifact_candidates = [*direct_candidates, *staged_candidates]
-                delivery_report = await self._send_artifacts(
-                    bot=bot,
-                    chat_id=chat_id,
-                    artifact_candidates=artifact_candidates,
-                    reply_to_message_id=item.reply_to_message_id,
-                    allowed_roots=[os.getcwd(), self._config.artifact_temp_root],
-                )
-                await self._send_artifact_delivery_summary(
-                    bot=bot,
-                    chat_id=chat_id,
-                    reply_to_message_id=item.reply_to_message_id,
-                    report=delivery_report,
                 )
             except asyncio.TimeoutError:
                 logger.warning("Copilot response timed out for chat_id=%s", chat_id)
@@ -778,7 +428,6 @@ class BackgroundDispatcher:
                     item=item,
                 )
             finally:
-                self._cleanup_staged_artifact_dir(staged_dir)
                 if reporter is not None:
                     reporter.done.set()
                 if heartbeat_task is not None:

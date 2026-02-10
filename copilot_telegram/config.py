@@ -2,21 +2,13 @@
 
 import logging
 import os
-import tempfile
 from typing import cast
 
 from copilot.types import LogLevel
 
 from .constants import (
-    DEFAULT_ARTIFACT_ALLOW_TMP_SOURCES_ONLY,
-    DEFAULT_ARTIFACT_REQUIRE_EXPLICIT_INTENT,
-    DEFAULT_ARTIFACT_SEND_RETRIES,
-    DEFAULT_ARTIFACT_SEND_TIMEOUT_SECONDS,
-    DEFAULT_ARTIFACT_TEMP_ROOT_BASENAME,
     DEFAULT_BINARY_DOWNLOAD_MAX_BYTES,
     DEFAULT_BINARY_DOWNLOAD_TIMEOUT_SECONDS,
-    DEFAULT_MAX_ARTIFACT_BYTES,
-    DEFAULT_MAX_ARTIFACTS_PER_REQUEST,
     DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_SECONDS,
     DEFAULT_SKILL_TOOL_MAX_CALLS_PER_ASK,
     DEFAULT_USER_INPUT_TIMEOUT_SECONDS,
@@ -40,23 +32,6 @@ def read_env_int(name: str, default: int) -> int:
             "Invalid integer for %s=%r. Using default %s.", name, raw_value, default
         )
         return default
-
-
-def read_env_bool(name: str, default: bool) -> bool:
-    """Read a boolean environment variable with fallback on invalid values."""
-
-    raw_value = os.getenv(name)
-    if raw_value is None:
-        return default
-    normalized = raw_value.strip().lower()
-    if normalized in {"1", "true", "yes", "on"}:
-        return True
-    if normalized in {"0", "false", "no", "off"}:
-        return False
-    logger.warning(
-        "Invalid boolean for %s=%r. Using default %s.", name, raw_value, default
-    )
-    return default
 
 
 def parse_log_level(value: str) -> LogLevel:
@@ -115,52 +90,13 @@ def is_reasoning_effort_unsupported_error(error: Exception) -> bool:
 def load_dispatcher_config() -> DispatcherConfig:
     """Load dispatcher-related settings from environment variables."""
 
-    default_temp_root = os.path.join(
-        tempfile.gettempdir(), DEFAULT_ARTIFACT_TEMP_ROOT_BASENAME
-    )
-    artifact_temp_root = os.getenv("TELEGRAM_ARTIFACT_TEMP_ROOT", default_temp_root)
-    if not artifact_temp_root.strip():
-        artifact_temp_root = default_temp_root
-
-    artifact_send_timeout_seconds = max(
-        1,
-        read_env_int(
-            "TELEGRAM_ARTIFACT_SEND_TIMEOUT_SECONDS",
-            DEFAULT_ARTIFACT_SEND_TIMEOUT_SECONDS,
-        ),
-    )
-    artifact_send_retries = max(
-        0,
-        read_env_int(
-            "TELEGRAM_ARTIFACT_SEND_RETRIES",
-            DEFAULT_ARTIFACT_SEND_RETRIES,
-        ),
-    )
-
     return DispatcherConfig(
         user_input_timeout_seconds=read_env_int(
             "COPILOT_USER_INPUT_TIMEOUT_SECONDS", DEFAULT_USER_INPUT_TIMEOUT_SECONDS
         ),
-        max_artifacts_per_request=read_env_int(
-            "TELEGRAM_MAX_ARTIFACTS", DEFAULT_MAX_ARTIFACTS_PER_REQUEST
-        ),
-        max_artifact_bytes=read_env_int(
-            "TELEGRAM_MAX_ARTIFACT_BYTES", DEFAULT_MAX_ARTIFACT_BYTES
-        ),
-        artifact_send_timeout_seconds=artifact_send_timeout_seconds,
-        artifact_send_retries=artifact_send_retries,
         shutdown_drain_timeout_seconds=read_env_int(
             "TELEGRAM_SHUTDOWN_DRAIN_TIMEOUT_SECONDS",
             DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_SECONDS,
-        ),
-        artifact_temp_root=os.path.abspath(artifact_temp_root),
-        artifact_allow_tmp_sources_only=read_env_bool(
-            "TELEGRAM_ARTIFACT_ALLOW_TMP_SOURCES_ONLY",
-            DEFAULT_ARTIFACT_ALLOW_TMP_SOURCES_ONLY,
-        ),
-        artifact_require_explicit_intent=read_env_bool(
-            "TELEGRAM_ARTIFACT_REQUIRE_EXPLICIT_INTENT",
-            DEFAULT_ARTIFACT_REQUIRE_EXPLICIT_INTENT,
         ),
     )
 
@@ -192,9 +128,5 @@ def load_startup_config() -> StartupConfig:
                 "COPILOT_SKILL_TOOL_MAX_CALLS_PER_ASK",
                 DEFAULT_SKILL_TOOL_MAX_CALLS_PER_ASK,
             ),
-        ),
-        require_explicit_artifact_intent=read_env_bool(
-            "TELEGRAM_ARTIFACT_REQUIRE_EXPLICIT_INTENT",
-            DEFAULT_ARTIFACT_REQUIRE_EXPLICIT_INTENT,
         ),
     )

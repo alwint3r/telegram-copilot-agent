@@ -1,11 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import os
-import tempfile
 import unittest
-from pathlib import Path
-from unittest.mock import patch
 
 from tests.support.fakes import (
     FakeApplication,
@@ -16,7 +12,6 @@ from tests.support.module_loader import import_runtime_module
 
 dispatcher_module = import_runtime_module("copilot_telegram.dispatcher")
 models_module = import_runtime_module("copilot_telegram.models")
-session_module = import_runtime_module("copilot_telegram.session_manager")
 
 
 class BackgroundDispatcherShutdownTests(unittest.IsolatedAsyncioTestCase):
@@ -205,7 +200,7 @@ class BackgroundDispatcherUserInputReplyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(future.result(), {"answer": "Deny", "wasFreeform": False})
 
 
-class BackgroundDispatcherConcurrencyAndArtifactTests(unittest.IsolatedAsyncioTestCase):
+class BackgroundDispatcherConcurrencyTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.BackgroundDispatcher = dispatcher_module.BackgroundDispatcher
 
@@ -286,368 +281,19 @@ class BackgroundDispatcherConcurrencyAndArtifactTests(unittest.IsolatedAsyncioTe
         finally:
             await dispatcher.shutdown()
 
-    async def test_worker_uses_only_explicit_artifact_paths(self) -> None:
-        with tempfile.TemporaryDirectory() as workspace:
-            artifact = Path(workspace, "implicit.zip")
-            artifact.write_bytes(b"artifact")
-            manager = StaticAskManager(
-                models_module.AskResult,
-                ask_result=models_module.AskResult(
-                    reply="done",
-                    artifact_paths=[str(artifact)],
-                ),
-            )
-            dispatcher = self.BackgroundDispatcher(FakeApplication(), manager)
-            bot = dispatcher._application.bot
-
-            try:
-                with patch.object(dispatcher_module.os, "getcwd", return_value=workspace):
-                    await dispatcher.enqueue(chat_id=21, text="hello", reply_to_message_id=None)
-                    runtime = await self._get_runtime(dispatcher, 21)
-                    await asyncio.wait_for(runtime.queue.join(), timeout=1)
-
-                self.assertEqual(manager.prompts, ["hello"])
-                self.assertEqual(bot.sent_documents, [])
-                self.assertEqual(bot.sent_photos, [])
-            finally:
-                await dispatcher.shutdown()
-
-    async def test_worker_allows_implicit_artifact_paths_when_strict_mode_disabled(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory() as workspace:
-            artifact = Path(workspace, "implicit.zip")
-            artifact.write_bytes(b"artifact")
-            manager = StaticAskManager(
-                models_module.AskResult,
-                ask_result=models_module.AskResult(
-                    reply="done",
-                    artifact_paths=[str(artifact)],
-                ),
-            )
-            with patch.dict(
-                os.environ,
-                {"TELEGRAM_ARTIFACT_REQUIRE_EXPLICIT_INTENT": "false"},
-                clear=False,
-            ):
-                dispatcher = self.BackgroundDispatcher(FakeApplication(), manager)
-            bot = dispatcher._application.bot
-
-            try:
-                with patch.object(dispatcher_module.os, "getcwd", return_value=workspace):
-                    await dispatcher.enqueue(chat_id=210, text="hello", reply_to_message_id=None)
-                    runtime = await self._get_runtime(dispatcher, 210)
-                    await asyncio.wait_for(runtime.queue.join(), timeout=1)
-
-                self.assertEqual(len(bot.sent_documents), 1)
-            finally:
-                await dispatcher.shutdown()
-
-    async def test_send_artifacts_skips_resolved_paths_outside_workspace(self) -> None:
-        dispatcher = self.BackgroundDispatcher(FakeApplication(), object())
+    async def test_worker_sends_reply_without_upload_logic(self) -> None:
+        manager = StaticAskManager(models_module.AskResult)
+        dispatcher = self.BackgroundDispatcher(FakeApplication(), manager)
         bot = dispatcher._application.bot
 
-        with tempfile.TemporaryDirectory() as workspace:
-            with tempfile.TemporaryDirectory() as outside:
-                outside_file = Path(outside, "secret.zip")
-                outside_file.write_bytes(b"secret")
-                symlink_path = Path(workspace, "leak.zip")
-                symlink_path.symlink_to(outside_file)
+        try:
+            await dispatcher.enqueue(chat_id=19, text="hello", reply_to_message_id=None)
+            runtime = await self._get_runtime(dispatcher, 19)
+            await asyncio.wait_for(runtime.queue.join(), timeout=1)
 
-                with patch.object(dispatcher_module.os, "getcwd", return_value=workspace):
-                    await dispatcher._send_artifacts(
-                        bot=bot,
-                        chat_id=1,
-                        artifact_candidates=[
-                            models_module.ArtifactIntent(path=str(symlink_path))
-                        ],
-                        reply_to_message_id=None,
-                    )
-
-        self.assertEqual(bot.sent_documents, [])
-        self.assertEqual(bot.sent_photos, [])
-
-    async def test_send_artifacts_allows_in_workspace_file(self) -> None:
-        dispatcher = self.BackgroundDispatcher(FakeApplication(), object())
-        bot = dispatcher._application.bot
-
-        with tempfile.TemporaryDirectory() as workspace:
-            artifact = Path(workspace, "artifact.zip")
-            artifact.write_bytes(b"artifact")
-
-            with patch.object(dispatcher_module.os, "getcwd", return_value=workspace):
-                await dispatcher._send_artifacts(
-                    bot=bot,
-                    chat_id=1,
-                    artifact_candidates=[models_module.ArtifactIntent(path=str(artifact))],
-                    reply_to_message_id=None,
-                )
-
-        self.assertEqual(len(bot.sent_documents), 1)
-        self.assertEqual(len(bot.sent_photos), 0)
-        self.assertTrue(
-            any("Sent 1 artifact(s)." == message["text"] for message in bot.sent_messages)
-        )
-
-    async def test_send_artifacts_supports_paths_collected_before_file_exists(self) -> None:
-        dispatcher = self.BackgroundDispatcher(FakeApplication(), object())
-        bot = dispatcher._application.bot
-
-        with tempfile.TemporaryDirectory() as workspace:
-            artifact = Path(workspace, "artifact.zip")
-
-            collector = session_module.AskEventCollector(workspace_root=workspace)
-            collector.collect_path(str(artifact))
-            ask_result = collector.build_result()
-            self.assertEqual(ask_result.artifact_paths, [str(artifact.resolve())])
-
-            artifact.write_bytes(b"artifact")
-            with patch.object(dispatcher_module.os, "getcwd", return_value=workspace):
-                await dispatcher._send_artifacts(
-                    bot=bot,
-                    chat_id=1,
-                    artifact_candidates=[
-                        models_module.ArtifactIntent(path=path)
-                        for path in ask_result.artifact_paths
-                    ],
-                    reply_to_message_id=None,
-                )
-
-        self.assertEqual(len(bot.sent_documents), 1)
-        self.assertEqual(len(bot.sent_photos), 0)
-        self.assertTrue(
-            any("Sent 1 artifact(s)." == message["text"] for message in bot.sent_messages)
-        )
-
-    async def test_worker_stages_external_temp_artifacts_and_cleans_up(self) -> None:
-        with tempfile.TemporaryDirectory() as external:
-            external_artifact = Path(external, "download.zip")
-            external_artifact.write_bytes(b"artifact")
-
-            with tempfile.TemporaryDirectory() as stage_root:
-                manager = StaticAskManager(
-                    models_module.AskResult,
-                    ask_result=models_module.AskResult(
-                        reply="done",
-                        artifact_intents=[
-                            models_module.ArtifactIntent(path=str(external_artifact))
-                        ],
-                    ),
-                )
-                with patch.dict(
-                    os.environ,
-                    {"TELEGRAM_ARTIFACT_TEMP_ROOT": stage_root},
-                    clear=False,
-                ):
-                    dispatcher = self.BackgroundDispatcher(FakeApplication(), manager)
-                bot = dispatcher._application.bot
-
-                try:
-                    await dispatcher.enqueue(chat_id=22, text="hello", reply_to_message_id=None)
-                    runtime = await self._get_runtime(dispatcher, 22)
-                    await asyncio.wait_for(runtime.queue.join(), timeout=1)
-
-                    self.assertEqual(len(bot.sent_documents), 1)
-                    staged_path = Path(os.path.realpath(bot.sent_documents[0]["document"].name))
-                    stage_root_path = Path(os.path.realpath(stage_root))
-                    self.assertTrue(staged_path.is_relative_to(stage_root_path))
-                    self.assertEqual(list(Path(stage_root).rglob("*")), [])
-                finally:
-                    await dispatcher.shutdown()
-
-    async def test_worker_rejects_non_tmp_external_artifact_sources_by_default(self) -> None:
-        workspace_parent = Path(os.getcwd()).resolve().parent
-        with tempfile.TemporaryDirectory(dir=str(workspace_parent)) as non_tmp_dir:
-            external_artifact = Path(non_tmp_dir, "secret.zip")
-            external_artifact.write_bytes(b"artifact")
-
-            with tempfile.TemporaryDirectory() as stage_root:
-                manager = StaticAskManager(
-                    models_module.AskResult,
-                    ask_result=models_module.AskResult(
-                        reply="done",
-                        artifact_intents=[
-                            models_module.ArtifactIntent(path=str(external_artifact))
-                        ],
-                    ),
-                )
-                with patch.dict(
-                    os.environ,
-                    {"TELEGRAM_ARTIFACT_TEMP_ROOT": stage_root},
-                    clear=False,
-                ):
-                    dispatcher = self.BackgroundDispatcher(FakeApplication(), manager)
-                bot = dispatcher._application.bot
-
-                try:
-                    await dispatcher.enqueue(chat_id=23, text="hello", reply_to_message_id=None)
-                    runtime = await self._get_runtime(dispatcher, 23)
-                    await asyncio.wait_for(runtime.queue.join(), timeout=1)
-
-                    self.assertEqual(len(bot.sent_documents), 0)
-                    self.assertEqual(len(bot.sent_photos), 0)
-                    self.assertFalse(
-                        any(message["text"].startswith("Sent ") for message in bot.sent_messages)
-                    )
-                finally:
-                    await dispatcher.shutdown()
-
-    async def test_worker_allows_workspace_and_external_same_basename(self) -> None:
-        with tempfile.TemporaryDirectory() as workspace:
-            workspace_artifact = Path(workspace, "artifact.zip")
-            workspace_artifact.write_bytes(b"workspace-artifact")
-
-            with tempfile.TemporaryDirectory() as external:
-                external_artifact = Path(external, "artifact.zip")
-                external_artifact.write_bytes(b"external-artifact")
-
-                with tempfile.TemporaryDirectory() as stage_root:
-                    manager = StaticAskManager(
-                        models_module.AskResult,
-                        ask_result=models_module.AskResult(
-                            reply="done",
-                            artifact_intents=[
-                                models_module.ArtifactIntent(path=str(workspace_artifact)),
-                                models_module.ArtifactIntent(path=str(external_artifact)),
-                            ],
-                        ),
-                    )
-                    with patch.dict(
-                        os.environ,
-                        {"TELEGRAM_ARTIFACT_TEMP_ROOT": stage_root},
-                        clear=False,
-                    ):
-                        dispatcher = self.BackgroundDispatcher(FakeApplication(), manager)
-                    bot = dispatcher._application.bot
-
-                    try:
-                        with patch.object(
-                            dispatcher_module.os, "getcwd", return_value=workspace
-                        ):
-                            await dispatcher.enqueue(
-                                chat_id=24, text="hello", reply_to_message_id=None
-                            )
-                            runtime = await self._get_runtime(dispatcher, 24)
-                            await asyncio.wait_for(runtime.queue.join(), timeout=1)
-
-                        self.assertEqual(len(bot.sent_documents), 2)
-                        self.assertTrue(
-                            any(
-                                message["text"] == "Sent 2 artifact(s)."
-                                for message in bot.sent_messages
-                            )
-                        )
-                    finally:
-                        await dispatcher.shutdown()
-
-    async def test_worker_reports_artifact_send_failure_to_user(self) -> None:
-        with tempfile.TemporaryDirectory() as workspace:
-            artifact = Path(workspace, "artifact.zip")
-            artifact.write_bytes(b"artifact")
-            manager = StaticAskManager(
-                models_module.AskResult,
-                ask_result=models_module.AskResult(
-                    reply="done",
-                    artifact_intents=[models_module.ArtifactIntent(path=str(artifact))],
-                ),
-            )
-            dispatcher = self.BackgroundDispatcher(FakeApplication(), manager)
-            bot = dispatcher._application.bot
-            bot.fail_send_document_count = 1
-
-            try:
-                with patch.object(dispatcher_module.os, "getcwd", return_value=workspace):
-                    await dispatcher.enqueue(chat_id=25, text="hello", reply_to_message_id=None)
-                    runtime = await self._get_runtime(dispatcher, 25)
-                    await asyncio.wait_for(runtime.queue.join(), timeout=1)
-
-                self.assertEqual(len(bot.sent_documents), 0)
-                self.assertTrue(
-                    any(
-                        message["text"].startswith(
-                            "I found 1 artifact(s) but could not deliver them."
-                        )
-                        for message in bot.sent_messages
-                    )
-                )
-                self.assertFalse(
-                    any(message["text"] == "Sent 1 artifact(s)." for message in bot.sent_messages)
-                )
-            finally:
-                await dispatcher.shutdown()
-
-    async def test_worker_reports_partial_artifact_send_failure(self) -> None:
-        with tempfile.TemporaryDirectory() as workspace:
-            artifact_a = Path(workspace, "a.zip")
-            artifact_a.write_bytes(b"a")
-            artifact_b = Path(workspace, "b.zip")
-            artifact_b.write_bytes(b"b")
-
-            manager = StaticAskManager(
-                models_module.AskResult,
-                ask_result=models_module.AskResult(
-                    reply="done",
-                    artifact_intents=[
-                        models_module.ArtifactIntent(path=str(artifact_a)),
-                        models_module.ArtifactIntent(path=str(artifact_b)),
-                    ],
-                ),
-            )
-            dispatcher = self.BackgroundDispatcher(FakeApplication(), manager)
-            bot = dispatcher._application.bot
-            bot.fail_send_document_count = 1
-
-            try:
-                with patch.object(dispatcher_module.os, "getcwd", return_value=workspace):
-                    await dispatcher.enqueue(chat_id=26, text="hello", reply_to_message_id=None)
-                    runtime = await self._get_runtime(dispatcher, 26)
-                    await asyncio.wait_for(runtime.queue.join(), timeout=1)
-
-                self.assertEqual(len(bot.sent_documents), 1)
-                self.assertTrue(
-                    any(message["text"] == "Sent 1 artifact(s)." for message in bot.sent_messages)
-                )
-                self.assertTrue(
-                    any(
-                        message["text"].startswith(
-                            "Delivered 1 artifact(s), but 1 failed."
-                        )
-                        for message in bot.sent_messages
-                    )
-                )
-            finally:
-                await dispatcher.shutdown()
-
-    async def test_worker_retries_artifact_send_after_timeout(self) -> None:
-        with tempfile.TemporaryDirectory() as workspace:
-            artifact = Path(workspace, "retry.zip")
-            artifact.write_bytes(b"artifact")
-            manager = StaticAskManager(
-                models_module.AskResult,
-                ask_result=models_module.AskResult(
-                    reply="done",
-                    artifact_intents=[models_module.ArtifactIntent(path=str(artifact))],
-                ),
-            )
-            dispatcher = self.BackgroundDispatcher(FakeApplication(), manager)
-            bot = dispatcher._application.bot
-            bot.fail_send_document_timeout_count = 1
-
-            try:
-                with patch.object(dispatcher_module.os, "getcwd", return_value=workspace):
-                    await dispatcher.enqueue(chat_id=27, text="hello", reply_to_message_id=None)
-                    runtime = await self._get_runtime(dispatcher, 27)
-                    await asyncio.wait_for(runtime.queue.join(), timeout=1)
-
-                self.assertEqual(len(bot.sent_documents), 1)
-                sent_payload = bot.sent_documents[0]
-                self.assertEqual(sent_payload["read_timeout"], 360)
-                self.assertEqual(sent_payload["write_timeout"], 360)
-                self.assertTrue(
-                    any(message["text"] == "Sent 1 artifact(s)." for message in bot.sent_messages)
-                )
-            finally:
-                await dispatcher.shutdown()
+            self.assertTrue(any(message["text"] == "reply:hello" for message in bot.sent_messages))
+        finally:
+            await dispatcher.shutdown()
 
 
 if __name__ == "__main__":

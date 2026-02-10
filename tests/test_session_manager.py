@@ -169,13 +169,9 @@ class CopilotSessionManagerResetTests(unittest.IsolatedAsyncioTestCase):
         tools = client.create_session_configs[0].get("tools")
         self.assertIsInstance(tools, list)
         self.assertTrue(tools)
-        self.assertIn(
-            custom_tools_module.DOWNLOAD_BINARY_TOOL_NAME,
+        self.assertEqual(
             [tool.name for tool in tools],
-        )
-        self.assertIn(
-            custom_tools_module.REGISTER_ARTIFACT_TOOL_NAME,
-            [tool.name for tool in tools],
+            [custom_tools_module.DOWNLOAD_BINARY_TOOL_NAME],
         )
         await manager.shutdown()
 
@@ -302,41 +298,32 @@ class StartupConfigReasoningEffortTests(unittest.TestCase):
             config_module.model_supports_reasoning_effort("claude-sonnet-4.5")
         )
 
-    def test_load_dispatcher_config_sets_artifact_staging_defaults(self) -> None:
+    def test_load_dispatcher_config_defaults(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             config = config_module.load_dispatcher_config()
 
-        self.assertTrue(config.artifact_temp_root.endswith("copilot-telegram-artifacts"))
-        self.assertTrue(config.artifact_allow_tmp_sources_only)
         self.assertEqual(
-            config.artifact_send_timeout_seconds,
-            constants_module.DEFAULT_ARTIFACT_SEND_TIMEOUT_SECONDS,
+            config.user_input_timeout_seconds,
+            constants_module.DEFAULT_USER_INPUT_TIMEOUT_SECONDS,
         )
         self.assertEqual(
-            config.artifact_send_retries,
-            constants_module.DEFAULT_ARTIFACT_SEND_RETRIES,
+            config.shutdown_drain_timeout_seconds,
+            constants_module.DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_SECONDS,
         )
-        self.assertTrue(config.artifact_require_explicit_intent)
 
-    def test_load_dispatcher_config_parses_artifact_staging_env(self) -> None:
+    def test_load_dispatcher_config_parses_shutdown_env(self) -> None:
         with patch.dict(
             os.environ,
             {
-                "TELEGRAM_ARTIFACT_TEMP_ROOT": "tmp/custom-staging",
-                "TELEGRAM_ARTIFACT_ALLOW_TMP_SOURCES_ONLY": "false",
-                "TELEGRAM_ARTIFACT_REQUIRE_EXPLICIT_INTENT": "false",
-                "TELEGRAM_ARTIFACT_SEND_TIMEOUT_SECONDS": "240",
-                "TELEGRAM_ARTIFACT_SEND_RETRIES": "3",
+                "COPILOT_USER_INPUT_TIMEOUT_SECONDS": "111",
+                "TELEGRAM_SHUTDOWN_DRAIN_TIMEOUT_SECONDS": "42",
             },
             clear=True,
         ):
             config = config_module.load_dispatcher_config()
 
-        self.assertEqual(config.artifact_temp_root, os.path.abspath("tmp/custom-staging"))
-        self.assertFalse(config.artifact_allow_tmp_sources_only)
-        self.assertFalse(config.artifact_require_explicit_intent)
-        self.assertEqual(config.artifact_send_timeout_seconds, 240)
-        self.assertEqual(config.artifact_send_retries, 3)
+        self.assertEqual(config.user_input_timeout_seconds, 111)
+        self.assertEqual(config.shutdown_drain_timeout_seconds, 42)
 
     def test_load_startup_config_sets_binary_download_defaults(self) -> None:
         with patch.dict(
@@ -358,7 +345,6 @@ class StartupConfigReasoningEffortTests(unittest.TestCase):
             config.skill_tool_max_calls_per_ask,
             constants_module.DEFAULT_SKILL_TOOL_MAX_CALLS_PER_ASK,
         )
-        self.assertTrue(config.require_explicit_artifact_intent)
 
     def test_load_startup_config_parses_binary_download_env(self) -> None:
         with patch.dict(
@@ -368,7 +354,6 @@ class StartupConfigReasoningEffortTests(unittest.TestCase):
                 "COPILOT_BINARY_DOWNLOAD_MAX_BYTES": "1234",
                 "COPILOT_BINARY_DOWNLOAD_TIMEOUT_SECONDS": "45",
                 "COPILOT_SKILL_TOOL_MAX_CALLS_PER_ASK": "7",
-                "TELEGRAM_ARTIFACT_REQUIRE_EXPLICIT_INTENT": "false",
             },
             clear=True,
         ):
@@ -377,7 +362,6 @@ class StartupConfigReasoningEffortTests(unittest.TestCase):
         self.assertEqual(config.binary_download_max_bytes, 1234)
         self.assertEqual(config.binary_download_timeout_seconds, 45)
         self.assertEqual(config.skill_tool_max_calls_per_ask, 7)
-        self.assertFalse(config.require_explicit_artifact_intent)
 
 
 if __name__ == "__main__":

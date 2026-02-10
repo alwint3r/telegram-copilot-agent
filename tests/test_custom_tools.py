@@ -84,7 +84,6 @@ class BinaryDownloadToolTests(unittest.IsolatedAsyncioTestCase):
             working_directory=workspace,
             max_download_bytes=max_bytes,
             download_timeout_seconds=10,
-            max_artifact_bytes=max_bytes,
         )
         tool = next((item for item in tools if item.name == tool_name), None)
         self.assertIsNotNone(tool)
@@ -226,55 +225,6 @@ class BinaryDownloadToolTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(result["resultType"], "failure")
             self.assertIn("timeout", result["error"])
-
-    async def test_register_artifact_success(self) -> None:
-        with tempfile.TemporaryDirectory() as workspace:
-            handler = self._build_handler(
-                workspace=workspace,
-                tool_name=custom_tools_module.REGISTER_ARTIFACT_TOOL_NAME,
-            )
-            artifact = Path(workspace, "chart.png")
-            artifact.write_bytes(b"\x89PNG\r\n\x1a\n")
-
-            result = await handler(
-                {"arguments": {"path": str(artifact), "caption": "Weather chart"}}
-            )
-
-            self.assertEqual(result["resultType"], "success")
-            payload = result["textResultForLlm"]
-            self.assertIn("\"delivery_intent\":true", payload)
-            self.assertIn(str(artifact.resolve()), payload)
-            self.assertIn("Weather chart", payload)
-
-    async def test_register_artifact_rejects_non_sendable_file(self) -> None:
-        with tempfile.TemporaryDirectory() as workspace:
-            handler = self._build_handler(
-                workspace=workspace,
-                tool_name=custom_tools_module.REGISTER_ARTIFACT_TOOL_NAME,
-            )
-            artifact = Path(workspace, "notes.txt")
-            artifact.write_text("hello", encoding="utf-8")
-
-            result = await handler({"arguments": {"path": str(artifact)}})
-
-            self.assertEqual(result["resultType"], "failure")
-            self.assertIn("eligible sendable artifact", result["error"])
-
-    async def test_register_artifact_rejects_path_outside_allowed_roots(self) -> None:
-        with tempfile.TemporaryDirectory() as workspace:
-            handler = self._build_handler(
-                workspace=workspace,
-                tool_name=custom_tools_module.REGISTER_ARTIFACT_TOOL_NAME,
-            )
-            outside_artifact = Path(os.getcwd(), "outside.zip")
-            outside_artifact.write_bytes(b"test")
-            try:
-                result = await handler({"arguments": {"path": str(outside_artifact)}})
-            finally:
-                outside_artifact.unlink(missing_ok=True)
-
-            self.assertEqual(result["resultType"], "failure")
-            self.assertIn("workspace or system temp", result["error"])
 
 
 if __name__ == "__main__":

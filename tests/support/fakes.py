@@ -99,13 +99,7 @@ class FakeBot:
     def __init__(self) -> None:
         self._message_id = 0
         self.sent_messages: list[dict[str, object]] = []
-        self.sent_photos: list[dict[str, object]] = []
-        self.sent_documents: list[dict[str, object]] = []
         self.fail_send_message_count = 0
-        self.fail_send_photo_count = 0
-        self.fail_send_document_count = 0
-        self.fail_send_photo_timeout_count = 0
-        self.fail_send_document_timeout_count = 0
 
     async def send_message(self, chat_id: int, text: str, **_kwargs):
         if self.fail_send_message_count > 0:
@@ -121,26 +115,6 @@ class FakeBot:
         return None
 
     async def send_chat_action(self, **_kwargs) -> None:
-        return None
-
-    async def send_photo(self, **_kwargs) -> None:
-        if self.fail_send_photo_timeout_count > 0:
-            self.fail_send_photo_timeout_count -= 1
-            raise TimeoutError("Timed out.")
-        if self.fail_send_photo_count > 0:
-            self.fail_send_photo_count -= 1
-            raise RuntimeError("send_photo failed")
-        self.sent_photos.append(dict(_kwargs))
-        return None
-
-    async def send_document(self, **_kwargs) -> None:
-        if self.fail_send_document_timeout_count > 0:
-            self.fail_send_document_timeout_count -= 1
-            raise TimeoutError("Timed out.")
-        if self.fail_send_document_count > 0:
-            self.fail_send_document_count -= 1
-            raise RuntimeError("send_document failed")
-        self.sent_documents.append(dict(_kwargs))
         return None
 
 
@@ -166,7 +140,7 @@ class GatedAskManager:
             await self.release_first.wait()
         if len(self.prompts) >= 2:
             self.second_seen.set()
-        return self._ask_result_type(reply=f"reply:{prompt}", artifact_paths=[])
+        return self._ask_result_type(reply=f"reply:{prompt}")
 
 
 class StaticAskManager:
@@ -180,4 +154,4 @@ class StaticAskManager:
         self.prompts.append(prompt)
         if self.ask_result is not None:
             return self.ask_result
-        return self._ask_result_type(reply=f"reply:{prompt}", artifact_paths=[])
+        return self._ask_result_type(reply=f"reply:{prompt}")

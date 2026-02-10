@@ -12,6 +12,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters
 from .config import load_startup_config
 from .dispatcher import BackgroundDispatcher
 from .handlers import (
+    application_error_handler,
     install_shutdown_signal_handlers,
     message_handler,
     on_shutdown,
@@ -69,7 +70,6 @@ def main() -> None:
         binary_download_max_bytes=startup_config.binary_download_max_bytes,
         binary_download_timeout_seconds=startup_config.binary_download_timeout_seconds,
         skill_tool_max_calls_per_ask=startup_config.skill_tool_max_calls_per_ask,
-        require_explicit_artifact_intent=startup_config.require_explicit_artifact_intent,
     )
 
     app = (
@@ -89,6 +89,7 @@ def main() -> None:
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("reset", reset_command))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_handler))
+    app.add_error_handler(application_error_handler)
 
     previous_signal_handlers = install_shutdown_signal_handlers(app, dispatcher)
     try:

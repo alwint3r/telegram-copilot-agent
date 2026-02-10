@@ -50,6 +50,7 @@ def install_dependency_stubs() -> None:
 
     telegram_module = types.ModuleType("telegram")
     telegram_module.Update = object
+
     sys.modules["telegram"] = telegram_module
 
     telegram_constants = types.ModuleType("telegram.constants")
@@ -65,11 +66,11 @@ def install_dependency_stubs() -> None:
     class BadRequest(Exception):
         pass
 
-    class TimedOut(Exception):
+    class NetworkError(Exception):
         pass
 
     telegram_error.BadRequest = BadRequest
-    telegram_error.TimedOut = TimedOut
+    telegram_error.NetworkError = NetworkError
     sys.modules["telegram.error"] = telegram_error
 
     telegram_ext = types.ModuleType("telegram.ext")
