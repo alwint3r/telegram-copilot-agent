@@ -6,6 +6,8 @@ When writing complex features, significant refactors, or being explicitly asked,
 
 - Persist your ExecPlan inside the .agent directory alongside the file PLANS.md.
 - Use unique name for your ExecPlan.
+- Use the following format for the filename: `execplan_<year><month><day>_<hour><minute><second>_<name>`.
+    - If `name` has more than one words, use `-` as the separator.
 - Do not alter the .agent/PLANS.md file.
 
 
