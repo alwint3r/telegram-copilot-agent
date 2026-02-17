@@ -43,7 +43,8 @@ Install the service files:
 
 ```bash
 UV_BIN="$(command -v uv)"
-sudo ./scripts/install_rpi_service.sh --repo-dir /opt/copilot-telegram --uv-bin "$UV_BIN"
+COPILOT_BIN="$(command -v copilot)"
+sudo ./scripts/install_rpi_service.sh --repo-dir /opt/copilot-telegram --uv-bin "$UV_BIN" --copilot-bin "$COPILOT_BIN"
 ```
 
 To run the service as a different Linux user, pass `--service-user <user>` or set `COPILOT_SERVICE_USER` before invoking the installer.
@@ -60,7 +61,10 @@ Edit `/opt/copilot-telegram/runtime/copilot-telegram.env` and set at minimum:
 
 ```bash
 TELEGRAM_BOT_API_KEY=<your-bot-api-key>
+GITHUB_TOKEN=<github-token-for-copilot>
 ```
+
+`GH_TOKEN` is also supported; when both are present, `GITHUB_TOKEN` is used.
 
 ## Enable and start the service
 
@@ -100,6 +104,7 @@ Common issues:
 
 - `uv: command not found`: install `uv` and ensure it is on `PATH` before running installer.
 - `uv` is installed but installer cannot find it under `sudo`: pass `--uv-bin "$(command -v uv)"`.
+- `FileNotFoundError: ... 'copilot'`: pass `--copilot-bin "$(command -v copilot)"` (or set `COPILOT_CLI_PATH`) and rerun installer so runtime env gets an absolute `COPILOT_CLI_PATH`.
 - Missing token: set `TELEGRAM_BOT_API_KEY` in `/opt/copilot-telegram/runtime/copilot-telegram.env`.
 - Startup failure after changes: run `sudo systemctl daemon-reload && sudo systemctl restart copilot-telegram.service`.
 
@@ -110,7 +115,8 @@ cd /opt/copilot-telegram
 git pull
 uv pip install -r requirements.txt
 UV_BIN="$(command -v uv)"
-sudo ./scripts/install_rpi_service.sh --repo-dir /opt/copilot-telegram --uv-bin "$UV_BIN"
+COPILOT_BIN="$(command -v copilot)"
+sudo ./scripts/install_rpi_service.sh --repo-dir /opt/copilot-telegram --uv-bin "$UV_BIN" --copilot-bin "$COPILOT_BIN"
 sudo systemctl restart copilot-telegram.service
 ```
 

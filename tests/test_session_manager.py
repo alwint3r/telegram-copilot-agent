@@ -363,6 +363,33 @@ class StartupConfigReasoningEffortTests(unittest.TestCase):
         self.assertEqual(config.binary_download_timeout_seconds, 45)
         self.assertEqual(config.skill_tool_max_calls_per_ask, 7)
 
+    def test_load_startup_config_prefers_github_token_over_gh_token(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "TELEGRAM_BOT_API_KEY": "token",
+                "GITHUB_TOKEN": "github-token-value",
+                "GH_TOKEN": "gh-token-value",
+            },
+            clear=True,
+        ):
+            config = config_module.load_startup_config()
+
+        self.assertEqual(config.github_token, "github-token-value")
+
+    def test_load_startup_config_uses_gh_token_when_github_token_missing(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "TELEGRAM_BOT_API_KEY": "token",
+                "GH_TOKEN": "gh-token-value",
+            },
+            clear=True,
+        ):
+            config = config_module.load_startup_config()
+
+        self.assertEqual(config.github_token, "gh-token-value")
+
 
 if __name__ == "__main__":
     unittest.main()

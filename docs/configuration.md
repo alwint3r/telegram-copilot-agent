@@ -6,6 +6,15 @@
 
 ## Optional
 
+- `GITHUB_TOKEN` / `GH_TOKEN`
+  - Personal access token for GitHub authentication used by the Copilot SDK CLI process.
+  - If both are set, `GITHUB_TOKEN` is preferred.
+  - In service deployments, set one of these in the env file to avoid interactive login dependencies.
+
+- `COPILOT_CLI_PATH`
+  - Absolute path to the `copilot` CLI executable used by the SDK subprocess launcher.
+  - Recommended for service deployments so startup does not depend on shell `PATH`.
+
 - `COPILOT_MODEL` (default: `gpt-5`)
   - Copilot model name used when creating sessions.
 

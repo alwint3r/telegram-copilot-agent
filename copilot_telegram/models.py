@@ -65,6 +65,7 @@ class StartupConfig:
     """Process-level startup configuration resolved from environment values."""
 
     api_key: str
+    github_token: str | None
     model: str
     timeout_seconds: int
     log_level: LogLevel

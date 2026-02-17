@@ -60,6 +60,8 @@ def main() -> None:
     startup_config = load_startup_config()
 
     client_options: CopilotClientOptions = {"log_level": startup_config.log_level}
+    if startup_config.github_token:
+        client_options["github_token"] = startup_config.github_token
     client = CopilotClient(client_options)
     manager = CopilotSessionManager(
         client=client,

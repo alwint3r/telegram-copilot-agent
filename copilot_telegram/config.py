@@ -108,8 +108,11 @@ def load_startup_config() -> StartupConfig:
     if not api_key:
         raise RuntimeError("TELEGRAM_BOT_API_KEY is not defined")
 
+    github_token = os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
+
     return StartupConfig(
         api_key=api_key,
+        github_token=github_token,
         model=os.getenv("COPILOT_MODEL", "gpt-5"),
         timeout_seconds=read_env_int("COPILOT_TIMEOUT_SECONDS", 600),
         log_level=parse_log_level(os.getenv("COPILOT_LOG_LEVEL", "info")),

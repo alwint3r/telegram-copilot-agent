@@ -6,16 +6,18 @@ SERVICE_USER="${COPILOT_SERVICE_USER:-pi}"
 ENABLE_NOW=0
 REPO_DIR=""
 UV_BIN=""
+COPILOT_BIN="${COPILOT_CLI_PATH:-}"
 SYSTEMD_UNIT_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/install_rpi_service.sh --repo-dir <path> [--service-user <user>] [--uv-bin <path>] [--enable-now]
+Usage: scripts/install_rpi_service.sh --repo-dir <path> [--service-user <user>] [--uv-bin <path>] [--copilot-bin <path>] [--enable-now]
 
 Installs the Copilot Telegram bot as a systemd service on Raspberry Pi OS.
 The service is configured to run with uv and will fail to install when uv is missing.
 The runtime environment file is managed at <repo-dir>/runtime/copilot-telegram.env.
 Default service user is `pi`, override via `--service-user` or `COPILOT_SERVICE_USER`.
+Copilot CLI path can be set with `--copilot-bin` or `COPILOT_CLI_PATH`.
 If the env template is missing, the installer generates a default env file.
 EOF
 }
@@ -77,6 +79,10 @@ parse_args() {
         UV_BIN="${2:-}"
         shift 2
         ;;
+      --copilot-bin)
+        COPILOT_BIN="${2:-}"
+        shift 2
+        ;;
       --enable-now)
         ENABLE_NOW=1
         shift
@@ -110,6 +116,9 @@ write_default_env_file() {
   cat >"${destination}" <<'EOF'
 # Required
 TELEGRAM_BOT_API_KEY=replace-with-your-bot-api-key
+COPILOT_CLI_PATH=
+GITHUB_TOKEN=
+GH_TOKEN=
 
 # Optional runtime settings
 COPILOT_MODEL=gpt-5-mini
@@ -208,6 +217,35 @@ main() {
     echo "Edit ${env_file} before starting the service."
   else
     echo "Keeping existing ${env_file}."
+  fi
+
+  local copilot_bin="${COPILOT_BIN}"
+  if [[ -z "${copilot_bin}" ]]; then
+    local env_file_copilot_bin=""
+    env_file_copilot_bin="$(sed -n 's/^COPILOT_CLI_PATH=//p' "${env_file}" | tail -n 1)"
+    if [[ -n "${env_file_copilot_bin}" ]]; then
+      copilot_bin="${env_file_copilot_bin}"
+    fi
+  fi
+  if [[ -z "${copilot_bin}" ]]; then
+    if command -v copilot >/dev/null 2>&1; then
+      copilot_bin="$(command -v copilot)"
+    else
+      echo "Error: copilot CLI binary was not found. Install it and rerun with --copilot-bin <path> or COPILOT_CLI_PATH." >&2
+      exit 1
+    fi
+  fi
+  if [[ ! -x "${copilot_bin}" ]]; then
+    echo "Error: copilot CLI path is not executable: ${copilot_bin}" >&2
+    exit 1
+  fi
+
+  local escaped_copilot_bin
+  escaped_copilot_bin="$(escape_sed_replacement "${copilot_bin}")"
+  if grep -q '^COPILOT_CLI_PATH=' "${env_file}"; then
+    sed -i "s|^COPILOT_CLI_PATH=.*$|COPILOT_CLI_PATH=${escaped_copilot_bin}|g" "${env_file}"
+  else
+    printf '\nCOPILOT_CLI_PATH=%s\n' "${copilot_bin}" >>"${env_file}"
   fi
 
   systemctl daemon-reload

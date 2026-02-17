@@ -34,11 +34,17 @@ class DeploymentAssetTests(unittest.TestCase):
         self.assertIn("require_command uv", content)
         self.assertIn("command -v uv", content)
         self.assertIn("--uv-bin", content)
+        self.assertIn("--copilot-bin", content)
+        self.assertIn("COPILOT_CLI_PATH", content)
+        self.assertIn("command -v copilot", content)
+        self.assertIn("copilot CLI binary was not found", content)
         self.assertIn("--service-user", content)
         self.assertIn("COPILOT_SERVICE_USER", content)
         self.assertIn("write_default_env_file", content)
         self.assertIn("Template missing at", content)
         self.assertNotIn("Error: environment template not found", content)
+        self.assertIn("GITHUB_TOKEN=", content)
+        self.assertIn("GH_TOKEN=", content)
         self.assertIn('runtime_dir="${resolved_repo_dir}/runtime"', content)
         self.assertIn('env_file="${runtime_dir}/copilot-telegram.env"', content)
         self.assertIn("__ENV_FILE__", content)
@@ -52,6 +58,9 @@ class DeploymentAssetTests(unittest.TestCase):
     def test_env_template_contains_required_key(self) -> None:
         content = ENV_TEMPLATE.read_text(encoding="utf-8")
         self.assertIn("TELEGRAM_BOT_API_KEY=", content)
+        self.assertIn("COPILOT_CLI_PATH=", content)
+        self.assertIn("GITHUB_TOKEN=", content)
+        self.assertIn("GH_TOKEN=", content)
 
 
 if __name__ == "__main__":
