@@ -44,3 +44,9 @@
 ## Invalid values
 
 Integer variables fall back to defaults if parsing fails. Invalid `COPILOT_LOG_LEVEL` values fall back to `info`. Invalid `COPILOT_REASONING_EFFORT` values are ignored.
+
+## Raspberry Pi deployment notes
+
+- The Raspberry Pi 4 `systemd` deployment flow uses `<repo>/runtime/copilot-telegram.env` as the environment file location (for example `/opt/copilot-telegram/runtime/copilot-telegram.env`).
+- The service is designed to run with `uv` (`uv run chat-telegram.py ...`) and does not support Python interpreter fallback.
+- See `docs/deployment-raspberry-pi.md` for end-to-end installation and operations steps.

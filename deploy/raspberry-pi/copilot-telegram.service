@@ -1,0 +1,16 @@
+[Unit]
+Description=Copilot Telegram Bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__SERVICE_USER__
+WorkingDirectory=__REPO_DIR__
+EnvironmentFile=__ENV_FILE__
+ExecStart=__UV_BIN__ run chat-telegram.py --working-directory __REPO_DIR__
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

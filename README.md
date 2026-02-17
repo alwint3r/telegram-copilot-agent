@@ -51,6 +51,7 @@ uv run python -m unittest -v
 - Architecture details: `docs/architecture.md`
 - Configuration reference: `docs/configuration.md`
 - Testing notes: `docs/testing.md`
+- Raspberry Pi 4 deployment: `docs/deployment-raspberry-pi.md`
 
 ## Where to edit
 
