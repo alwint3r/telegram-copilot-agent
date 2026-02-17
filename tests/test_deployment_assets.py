@@ -34,6 +34,8 @@ class DeploymentAssetTests(unittest.TestCase):
         self.assertIn("require_command uv", content)
         self.assertIn("command -v uv", content)
         self.assertIn("--uv-bin", content)
+        self.assertIn("--service-user", content)
+        self.assertIn("COPILOT_SERVICE_USER", content)
         self.assertIn('runtime_dir="${resolved_repo_dir}/runtime"', content)
         self.assertIn('env_file="${runtime_dir}/copilot-telegram.env"', content)
         self.assertIn("__ENV_FILE__", content)

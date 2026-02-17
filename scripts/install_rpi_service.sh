@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SERVICE_NAME="copilot-telegram"
-SERVICE_USER="pi"
+SERVICE_USER="${COPILOT_SERVICE_USER:-pi}"
 ENABLE_NOW=0
 REPO_DIR=""
 UV_BIN=""
@@ -15,6 +15,7 @@ Usage: scripts/install_rpi_service.sh --repo-dir <path> [--service-user <user>] 
 Installs the Copilot Telegram bot as a systemd service on Raspberry Pi OS.
 The service is configured to run with uv and will fail to install when uv is missing.
 The runtime environment file is managed at <repo-dir>/runtime/copilot-telegram.env.
+Default service user is `pi`, override via `--service-user` or `COPILOT_SERVICE_USER`.
 EOF
 }
 

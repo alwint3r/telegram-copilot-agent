@@ -46,6 +46,8 @@ UV_BIN="$(command -v uv)"
 sudo ./scripts/install_rpi_service.sh --repo-dir /opt/copilot-telegram --uv-bin "$UV_BIN"
 ```
 
+To run the service as a different Linux user, pass `--service-user <user>` or set `COPILOT_SERVICE_USER` before invoking the installer.
+
 The installer creates the runtime environment file at:
 
 ```bash
