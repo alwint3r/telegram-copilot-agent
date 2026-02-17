@@ -54,6 +54,8 @@ The installer creates the runtime environment file at:
 /opt/copilot-telegram/runtime/copilot-telegram.env
 ```
 
+If `deploy/raspberry-pi/copilot-telegram.env.example` is missing in your checkout, the installer will still create this file using built-in defaults.
+
 Edit `/opt/copilot-telegram/runtime/copilot-telegram.env` and set at minimum:
 
 ```bash

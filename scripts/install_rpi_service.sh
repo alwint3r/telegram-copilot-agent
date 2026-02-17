@@ -16,6 +16,7 @@ Installs the Copilot Telegram bot as a systemd service on Raspberry Pi OS.
 The service is configured to run with uv and will fail to install when uv is missing.
 The runtime environment file is managed at <repo-dir>/runtime/copilot-telegram.env.
 Default service user is `pi`, override via `--service-user` or `COPILOT_SERVICE_USER`.
+If the env template is missing, the installer generates a default env file.
 EOF
 }
 
@@ -104,6 +105,26 @@ parse_args() {
   fi
 }
 
+write_default_env_file() {
+  local destination="$1"
+  cat >"${destination}" <<'EOF'
+# Required
+TELEGRAM_BOT_API_KEY=replace-with-your-bot-api-key
+
+# Optional runtime settings
+COPILOT_MODEL=gpt-5-mini
+COPILOT_TIMEOUT_SECONDS=600
+COPILOT_LOG_LEVEL=info
+COPILOT_REASONING_EFFORT=medium
+COPILOT_BINARY_DOWNLOAD_MAX_BYTES=47185920
+COPILOT_BINARY_DOWNLOAD_TIMEOUT_SECONDS=120
+COPILOT_SKILL_TOOL_MAX_CALLS_PER_ASK=4
+COPILOT_USER_INPUT_TIMEOUT_SECONDS=300
+COPILOT_USER_INPUT_DEFAULT_ANSWER=Proceed using your best judgment and continue.
+TELEGRAM_SHUTDOWN_DRAIN_TIMEOUT_SECONDS=60
+EOF
+}
+
 main() {
   parse_args "$@"
 
@@ -127,10 +148,6 @@ main() {
 
   if [[ ! -f "${unit_template}" ]]; then
     echo "Error: unit template not found: ${unit_template}" >&2
-    exit 1
-  fi
-  if [[ ! -f "${env_template}" ]]; then
-    echo "Error: environment template not found: ${env_template}" >&2
     exit 1
   fi
 
@@ -179,9 +196,16 @@ main() {
 
   install -d -m 0755 "${runtime_dir}"
   if [[ ! -f "${env_file}" ]]; then
-    install -m 0640 "${env_template}" "${env_file}"
+    if [[ -f "${env_template}" ]]; then
+      install -m 0640 "${env_template}" "${env_file}"
+      echo "Created ${env_file} from template."
+    else
+      write_default_env_file "${env_file}"
+      chmod 0640 "${env_file}"
+      echo "Template missing at ${env_template}; created ${env_file} with built-in defaults."
+    fi
     chown root:"${SERVICE_USER}" "${env_file}"
-    echo "Created ${env_file} from template. Edit it before starting the service."
+    echo "Edit ${env_file} before starting the service."
   else
     echo "Keeping existing ${env_file}."
   fi
