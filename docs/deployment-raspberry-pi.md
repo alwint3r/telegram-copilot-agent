@@ -44,7 +44,8 @@ Install the service files:
 ```bash
 UV_BIN="$(command -v uv)"
 COPILOT_BIN="$(command -v copilot)"
-sudo ./scripts/install_rpi_service.sh --repo-dir /opt/copilot-telegram --uv-bin "$UV_BIN" --copilot-bin "$COPILOT_BIN"
+SERVICE_USER="$(whoami)"
+sudo ./scripts/install_rpi_service.sh --repo-dir /opt/copilot-telegram --uv-bin "$UV_BIN" --copilot-bin "$COPILOT_BIN" --service-user "$SERVICE_USER"
 ```
 
 To run the service as a different Linux user, pass `--service-user <user>` or set `COPILOT_SERVICE_USER` before invoking the installer.
